@@ -16,21 +16,21 @@
 package sse
 
 import (
-	"bufio"
 	"context"
-	"errors"
-	"fmt"
-	"io"
 	"net/http"
 	"strconv"
 	"time"
 
+	"github.com/IBM/sarama"
 	config "github.com/eiffel-community/etos-api/internal/configs/sse"
-	"github.com/eiffel-community/etos-api/internal/kubernetes"
 	"github.com/eiffel-community/etos-api/pkg/application"
 	"github.com/eiffel-community/etos-api/pkg/events"
 	"github.com/julienschmidt/httprouter"
 	"github.com/sirupsen/logrus"
+)
+
+const (
+	KafkaServerAddress = "localhost:9092" // TODO: Obviously not
 )
 
 type SSEApplication struct {
@@ -44,7 +44,6 @@ type SSEHandler struct {
 	logger *logrus.Entry
 	cfg    config.Config
 	ctx    context.Context
-	kube   *kubernetes.Kubernetes
 }
 
 // Close cancels the application context
@@ -65,8 +64,7 @@ func New(cfg config.Config, log *logrus.Entry, ctx context.Context) application.
 
 // LoadRoutes loads all the v1 routes.
 func (a SSEApplication) LoadRoutes(router *httprouter.Router) {
-	kube := kubernetes.New(a.cfg, a.logger)
-	handler := &SSEHandler{a.logger, a.cfg, a.ctx, kube}
+	handler := &SSEHandler{a.logger, a.cfg, a.ctx}
 	router.GET("/v1/selftest/ping", handler.Selftest)
 	router.GET("/v1/events/:identifier", handler.GetEvents)
 	router.GET("/v1/event/:identifier/:id", handler.GetEvent)
@@ -81,12 +79,35 @@ func (h SSEHandler) Selftest(w http.ResponseWriter, r *http.Request, _ httproute
 
 // Subscribe subscribes to an ETOS suite runner instance and gets logs and events from it and
 // writes them to a channel.
-func (h SSEHandler) Subscribe(ch chan<- events.Event, logger *logrus.Entry, ctx context.Context, counter int, identifier string, url string) {
+func (h SSEHandler) Subscribe(ch chan<- events.Event, logger *logrus.Entry, ctx context.Context, counter int, identifier string) {
 	defer close(ch)
 
-	// TODO: Test a streaming approach.
-	tick := time.NewTicker(1 * time.Second)
-	defer tick.Stop()
+	consumer, err := sarama.NewConsumer([]string{KafkaServerAddress}, sarama.NewConfig())
+	if err != nil {
+		logger.WithError(err).Error("failed to initialize consumer")
+		return
+	}
+	defer func() {
+		if err = consumer.Close(); err != nil {
+			logger.WithError(err).Error("failed to close the consumer")
+		}
+	}()
+
+	offset := sarama.OffsetOldest
+	if counter != 0 {
+		offset = int64(counter - 1)
+	}
+	partitionConsumer, err := consumer.ConsumePartition(identifier, 0, offset)
+	if err != nil {
+		logger.WithError(err).Error("failed to initialize partition consumer")
+		return
+	}
+	defer func() {
+		if err = partitionConsumer.Close(); err != nil {
+			logger.WithError(err).Error("failed to close the partition consumer")
+		}
+	}()
+
 	ping := time.NewTicker(15 * time.Second)
 	defer ping.Stop()
 
@@ -97,154 +118,87 @@ func (h SSEHandler) Subscribe(ch chan<- events.Event, logger *logrus.Entry, ctx 
 			return
 		case <-ping.C:
 			ch <- events.Event{Event: "ping"}
-		case <-tick.C:
-			newEvents, err := GetFrom(ctx, url, fmt.Sprint(counter))
+		case msg := <-partitionConsumer.Messages():
+			event, err := events.New(msg.Value)
 			if err != nil {
-				// The context sent to IsFinished may be canceled due to client-side
-				// throttling by Kubernetes. We don't want IsFinished to cancel the
-				// the request context from our clients, causing a ConnectionReset,
-				// so we create a new context here.
-				if h.kube.IsFinished(context.Background(), identifier) {
-					logger.Info("ESR finished, shutting down")
-					// If the shutdown event is not sent to the client, then the client will
-					// reconnect and the message will be received next time.
-					ch <- events.Event{Event: "shutdown", Data: "ESR finished, shutting down"}
-					// We expect the client to close the connection, as such we continue here
-					// instead of ending the subscriber.
-					continue
-				}
-				logger.Warning(err.Error())
+				logger.WithError(err).Error("failed to parse SSE event")
 				continue
 			}
-			for _, event := range newEvents {
-				ch <- event
-				counter++
-			}
+			event.ID = counter
+			ch <- event
+			counter++
 		}
 	}
-}
-
-// GetFrom gets all events from an ESR instance starting from id (including the id specified).
-func GetFrom(ctx context.Context, url string, id string) ([]events.Event, error) {
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return nil, err
-	}
-	query := request.URL.Query()
-	query.Add("start", id)
-	request.URL.RawQuery = query.Encode()
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return nil, err
-	}
-	defer response.Body.Close()
-
-	etosEvents := []events.Event{}
-	scanner := bufio.NewScanner(response.Body)
-	for scanner.Scan() {
-		event, err := events.New(scanner.Bytes())
-		if err != nil {
-			// TODO: Log it?
-			continue
-		}
-		etosEvents = append(etosEvents, event)
-	}
-	return etosEvents, nil
-}
-
-// GetOne gets a single event from an ESR instance.
-func GetOne(ctx context.Context, logger *logrus.Entry, url string, id string) (events.Event, error) {
-	event := events.Event{}
-	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
-	if err != nil {
-		return event, err
-	}
-	query := request.URL.Query()
-	query.Add("start", id)
-	query.Add("end", id)
-	request.URL.RawQuery = query.Encode()
-
-	response, err := http.DefaultClient.Do(request)
-	if err != nil {
-		return event, err
-	}
-	defer response.Body.Close()
-
-	body, err := io.ReadAll(response.Body)
-	if err != nil {
-		logger.Errorf("Request failed (could not read response body): %+v", request)
-		return event, err
-	}
-	return events.New(body)
-}
-
-// url find the url of an ESR instance.
-func (h SSEHandler) url(ctx context.Context, identifier string) (string, error) {
-	url, err := h.kube.LogListenerIP(ctx, identifier)
-	if err != nil {
-		return "", err
-	}
-	if url == "" {
-		return "", errors.New("esr has not started yet")
-	}
-	return fmt.Sprintf("http://%s:8000/v1/log", url), nil
 }
 
 // GetEvent is an endpoint for getting a single event from an ESR instance.
 func (h SSEHandler) GetEvent(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	identifier := ps.ByName("identifier")
-	counter := ps.ByName("id")
-	if h.kube.IsFinished(r.Context(), identifier) {
-		http.NotFound(w, r)
-		return
-	}
+	id := ps.ByName("id")
 	// Making it possible for us to correlate logs to a specific connection
 	logger := h.logger.WithField("identifier", identifier)
 
-	url, err := h.url(r.Context(), identifier)
+	counter, err := strconv.Atoi(id)
 	if err != nil {
-		logger.Error(err)
-		http.NotFound(w, r)
+		logger.WithError(err).Errorf("could not parse ID as integer: %s", id)
 		return
 	}
 
-	event, err := GetOne(r.Context(), logger, url, counter)
+	consumer, err := sarama.NewConsumer([]string{KafkaServerAddress}, sarama.NewConfig())
 	if err != nil {
-		logger.Error(err)
-		// TODO: Message client
+		logger.WithError(err).Error("failed to initialize consumer")
 		return
 	}
-	if err := event.Write(w); err != nil {
-		logger.Error(err)
+	defer func() {
+		if err = consumer.Close(); err != nil {
+			logger.WithError(err).Error("failed to close the consumer")
+		}
+	}()
+
+	partitionConsumer, err := consumer.ConsumePartition(identifier, 0, int64(counter-1))
+	if err != nil {
+		logger.WithError(err).Error("failed to initialize partition consumer")
+		return
+	}
+	defer func() {
+		if err = partitionConsumer.Close(); err != nil {
+			logger.WithError(err).Error("failed to close the partition consumer")
+		}
+	}()
+
+	select {
+	case msg := <-partitionConsumer.Messages():
+		event, err := events.New(msg.Value)
+		if err != nil {
+			logger.WithError(err).Error("failed to parse message as SSE event")
+			return
+		}
+		event.ID = counter
+		if err = event.Write(w); err != nil {
+			logger.WithError(err).Error("failed to write event response")
+		}
+	case <-r.Context().Done():
+		return
 	}
 }
 
 // GetEvents is an endpoint for streaming events and logs from an ESR instance.
 func (h SSEHandler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	identifier := ps.ByName("identifier")
-	if h.kube.IsFinished(r.Context(), identifier) {
-		http.NotFound(w, r)
-		return
-	}
+
 	// Making it possible for us to correlate logs to a specific connection
 	logger := h.logger.WithField("identifier", identifier)
 
-	url, err := h.url(r.Context(), identifier)
-	if err != nil {
-		http.NotFound(w, r)
-		return
-	}
 	w.Header().Set("Content-Type", "text/event-stream")
 	w.Header().Set("Cache-Control", "no-cache")
 	w.Header().Set("Connection", "keep-alive")
 	w.Header().Set("Transfer-Encoding", "chunked")
 
-	last_id := 1
+	lastID := 1
 	lastEventID := r.Header.Get("Last-Event-ID")
 	if lastEventID != "" {
 		var err error
-		last_id, err = strconv.Atoi(lastEventID)
+		lastID, err = strconv.Atoi(lastEventID)
 		if err != nil {
 			logger.Error("Last-Event-ID header is not parsable")
 		}
@@ -259,7 +213,7 @@ func (h SSEHandler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprou
 	logger.Info("Client connected to SSE")
 
 	receiver := make(chan events.Event) // Channel is closed in Subscriber
-	go h.Subscribe(receiver, logger, r.Context(), last_id, identifier, url)
+	go h.Subscribe(receiver, logger, r.Context(), lastID, identifier)
 
 	for {
 		select {
