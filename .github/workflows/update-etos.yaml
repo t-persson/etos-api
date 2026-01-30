@@ -1,0 +1,73 @@
+name: Update ETOS defaults
+
+on:
+  workflow_call:
+    inputs:
+      api-image:
+        description: 'ETOS API image'
+        required: true
+        type: string
+      sse-image:
+        description: 'ETOS SSE image'
+        required: true
+        type: string
+      logarea-image:
+        description: 'ETOS LogArea image'
+        required: true
+        type: string
+  workflow_dispatch:
+
+env:
+  ETOS_REPOSITORY: t-persson/etos
+
+jobs:
+  update-etos-defaults: 
+    runs-on: ubuntu-latest
+    steps:
+    - uses: actions/checkout@v6
+    - name: Get commit message header
+      id: get_commit_message
+      run: |
+        COMMIT_MESSAGE_HEADER=$(git log -1 --pretty=%B | head -n 1)
+        echo "COMMIT_MESSAGE_HEADER=${COMMIT_MESSAGE_HEADER}" >> $GITHUB_ENV
+    - name: Generate a token
+      id: generate-token
+      uses: actions/create-github-app-token@v2
+      with:
+        owner: t-persson
+        repositories: etos
+        app-id: ${{ vars.GHPR_APP_ID }}
+        private-key: ${{ secrets.GHPR_PRIVATE_KEY }}
+    - uses: actions/checkout@v6
+      with:
+        repository: ${{ env.ETOS_REPOSITORY }}
+        token: ${{ steps.generate-token.outputs.token }}
+    - name: Update manifests
+      uses: fjogeleit/yaml-update-action@main
+      with:
+        branch: "update-etos-api-${{ github.run_id }}"
+        repository: ${{ env.ETOS_REPOSITORY }}
+        message: "${{ github.event.head_commit.message }}"
+        token: ${{ steps.generate-token.outputs.token }}
+        changes: |
+          {
+            "config/crd/defaults/api.yaml": {
+              ".[0].value": "${{ inputs.api-image }}"
+            },
+            "config/crd/defaults/sse.yaml": {
+              ".[0].value": "${{ inputs.sse-image }}"
+            },
+            "config/crd/defaults/logarea.yaml": {
+              ".[0].value": "${{ inputs.logarea-image }}"
+            }
+          }
+    - name: Create Pull Request
+      uses: peter-evans/create-pull-request@v8
+      with:
+        token: ${{ steps.generate-token.outputs.token }}
+        commit-message: "${{ github.event.head_commit.message }}"
+        title: "${{ env.COMMIT_MESSAGE_HEADER }}"
+        body: "Automated update of ETOS default images."
+        sign-commits: true
+        branch: "update-etos-api-${{ github.run_id }}"
+        labels: automated-pr, dependencies, etos-api
