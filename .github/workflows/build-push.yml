@@ -18,7 +18,7 @@ permissions:
 
 jobs:
   build-api:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -48,7 +48,7 @@ jobs:
     outputs:
       apiImage: ${{ steps.image.outputs.image }}
   build-sse:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -78,7 +78,7 @@ jobs:
     outputs:
       sseImage: ${{ steps.image.outputs.image }}
   build-logarea:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -108,7 +108,7 @@ jobs:
     outputs:
       logareaImage: ${{ steps.image.outputs.image }}
   build-keys:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -138,7 +138,7 @@ jobs:
     outputs:
       keysImage: ${{ steps.image.outputs.image }}
   build-iut:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -168,7 +168,7 @@ jobs:
     outputs:
       iutImage: ${{ steps.image.outputs.image }}
   build-executionspace:
-    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
