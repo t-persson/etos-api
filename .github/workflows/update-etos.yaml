@@ -27,7 +27,9 @@ jobs:
     - uses: actions/checkout@v6
     - name: Get commit metadata
       run: |
+        COMMIT_MESSAGE=$(git log -1 --pretty=%B)
         COMMIT_MESSAGE_HEADER=$(git log -1 --pretty=%B | head -n 1)
+        echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
         echo "COMMIT_MESSAGE_HEADER=${COMMIT_MESSAGE_HEADER}" >> $GITHUB_ENV
         echo "COMMIT=${{ github.sha }}" >> $GITHUB_ENV
     - name: Generate a token
@@ -63,7 +65,7 @@ jobs:
       uses: peter-evans/create-pull-request@v8
       with:
         token: ${{ steps.generate-token.outputs.token }}
-        commit-message: "${{ github.event.head_commit.message }}"
+        commit-message: "${{ env.COMMIT_MESSAGE }}"
         title: "Integrate ${{ env.COMMIT_MESSAGE_HEADER }}"
         body: "Automated update of ETOS images for API, SSE, and LogArea\n
 
