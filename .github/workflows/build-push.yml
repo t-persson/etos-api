@@ -1,9 +1,8 @@
 name: Build and push
 
 on:
-  # Empty commit message on pull_request_target
   pull_request_target:
-    branches: [ "master" ]  # Don't know if this works
+    branches: [ "master" ]
     types:
       - closed
   push:
@@ -19,7 +18,7 @@ permissions:
 
 jobs:
   build-api:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -49,7 +48,7 @@ jobs:
     outputs:
       apiImage: ${{ steps.image.outputs.image }}
   build-sse:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
@@ -79,7 +78,7 @@ jobs:
     outputs:
       sseImage: ${{ steps.image.outputs.image }}
   build-logarea:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
     # - uses: actions/checkout@v6
