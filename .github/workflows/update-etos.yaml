@@ -1,0 +1,19 @@
+name: Update ETOS defaults
+
+on:
+  workflow_run:
+    workflows: ["Build and push"]
+    types:
+      - completed
+  push:
+
+jobs:
+  echo: 
+    runs-on: ubuntu-latest
+    steps:
+    - name: Echo event name
+      run: echo "Event name is ${{ github.event_name }}"
+  # Update ETOS API default image version
+  # Update ETOS SSE default image version
+  # Update ETOS LogArea default image version
+  # Update ETOS Keys? default image version
