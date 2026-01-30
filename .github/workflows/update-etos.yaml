@@ -18,7 +18,9 @@ on:
   workflow_dispatch:
 
 env:
-  ETOS_REPOSITORY: t-persson/etos
+  REPOSITORY_OWNER: t-persson
+  ETOS_REPOSITORY: etos
+  ETOS_API_REPOSITORY: etos-api 
 
 jobs:
   update-etos-defaults: 
@@ -29,20 +31,29 @@ jobs:
       run: |
         COMMIT_MESSAGE=$(git log -1 --pretty=%B)
         COMMIT_MESSAGE_HEADER=$(git log -1 --pretty=%B | head -n 1)
-        echo "COMMIT_MESSAGE=${COMMIT_MESSAGE}" >> $GITHUB_ENV
         echo "COMMIT_MESSAGE_HEADER=${COMMIT_MESSAGE_HEADER}" >> $GITHUB_ENV
         echo "COMMIT=${{ github.sha }}" >> $GITHUB_ENV
+    - name: Get commit message
+      # Newlines are not supported in environment variables directly, so we use a heredoc to set it.
+      # https://docs.github.com/en/actions/reference/workflows-and-actions/workflow-commands#multiline-strings
+      # Found no way to integrate this in the step above, so it will have to be done in a separate step.
+      run: |
+        {
+          echo 'COMMIT_MESSAGE<<EOF'
+          git log -1 --pretty=%B
+          echo EOF
+        } >> "$GITHUB_ENV"
     - name: Generate a token
       id: generate-token
       uses: actions/create-github-app-token@v2
       with:
-        owner: t-persson
-        repositories: etos
+        owner: ${{ env.REPOSITORY_OWNER }}
+        repositories: ${{ env.ETOS_REPOSITORY }}
         app-id: ${{ vars.GHPR_APP_ID }}
         private-key: ${{ secrets.GHPR_PRIVATE_KEY }}
     - uses: actions/checkout@v6
       with:
-        repository: ${{ env.ETOS_REPOSITORY }}
+        repository: ${{ env.REPOSITORY_OWNER}}/${{ env.ETOS_REPOSITORY }}
         token: ${{ steps.generate-token.outputs.token }}
     - name: Update manifests
       uses: fjogeleit/yaml-update-action@main
@@ -65,11 +76,11 @@ jobs:
       uses: peter-evans/create-pull-request@v8
       with:
         token: ${{ steps.generate-token.outputs.token }}
-        commit-message: "${{ env.COMMIT_MESSAGE }}"
-        title: "Integrate ${{ env.COMMIT_MESSAGE_HEADER }}"
+        commit-message: $(echo "$env.COMMIT_MESSAGE" | base64 --decode)
+        title: "Integrate \"${{ env.COMMIT_MESSAGE_HEADER }}\""
         body: "Automated update of ETOS images for API, SSE, and LogArea\n
 
-        Commit: https://github.com/t-persson/etos-api/commit/${{ env.COMMIT }}\n
+        Commit: https://github.com/${{ env.REPOSITORY_OWNER }}/${{ env.ETOS_API_REPOSITORY }}/commit/${{ env.COMMIT }}\n
 
         Changes included:
 

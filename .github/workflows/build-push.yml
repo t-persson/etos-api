@@ -1,9 +1,8 @@
 name: Build and push
 
 on:
-  # Empty commit message on pull_request_target
   pull_request_target:
-    branches: [ "master" ]  # Don't know if this works
+    branches: [ "master" ]
     types:
       - closed
   push:
