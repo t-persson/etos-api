@@ -2,251 +2,206 @@ name: Build and push
 
 on:
   pull_request_target:
-    branches: [ "main" ]
+    branches: [ "master" ]  # Don't know if this works
     types:
       - closed
+  push:
+    branches:
+    - "master"
   workflow_dispatch:
 
+env:
+  MAIN_BRANCH: master
 permissions:
   contents: write
   packages: write
 
 jobs:
-  build_api:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+  build-api:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push app image
+    # - uses: actions/checkout@v6
+    # - name: Build app image
+    #   run: docker build . --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
       id: image
       run: |
         IMAGE_ID=ghcr.io/eiffel-community/etos-api
-        # Strip git ref prefix from version
         VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
         [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
         # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
         echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
+    - name: Push app image
+      run: |
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
     outputs:
-      apiVersion: ${{ steps.image.outputs.version }}
-  build_sse:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+      apiImage: ${{ steps.image.outputs.image }}
+  build-sse:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . -f deploy/etos-sse/Dockerfile --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push app image
+    # - uses: actions/checkout@v6
+    # - name: Build app image
+    #   run: docker build . -f deploy/etos-sse/Dockerfile --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
       id: image
       run: |
         IMAGE_ID=ghcr.io/eiffel-community/etos-sse
-        # Strip git ref prefix from version
         VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
         [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
         # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
         echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
-    outputs:
-      sseVersion: ${{ steps.image.outputs.version }}
-  build_keys:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
-    runs-on: ubuntu-latest
-    steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . -f deploy/etos-keys/Dockerfile --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
     - name: Push app image
-      id: image
       run: |
-        IMAGE_ID=ghcr.io/eiffel-community/etos-keys
-        # Strip git ref prefix from version
-        VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
-        [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
-        # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
-        echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
     outputs:
-      keysVersion: ${{ steps.image.outputs.version }}
-  build_logarea:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+      sseImage: ${{ steps.image.outputs.image }}
+  build-logarea:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . -f deploy/etos-logarea/Dockerfile --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push app image
+    # - uses: actions/checkout@v6
+    # - name: Build app image
+    #   run: docker build . -f deploy/etos-logarea/Dockerfile --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
       id: image
       run: |
         IMAGE_ID=ghcr.io/eiffel-community/etos-logarea
-        # Strip git ref prefix from version
         VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
         [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
         # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
         echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
+    - name: Push app image
+      run: |
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
     outputs:
-      logAreaVersion: ${{ steps.image.outputs.version }}
-  build_iut:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+      logareaImage: ${{ steps.image.outputs.image }}
+  build-keys:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . -f deploy/etos-iut/Dockerfile --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
+    # - uses: actions/checkout@v6
+    # - name: Build app image
+    #   run: docker build . -f deploy/etos-keys/Dockerfile --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
+      id: image
+      run: |
+        IMAGE_ID=ghcr.io/eiffel-community/etos-keys
+        VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
+        [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
+        # Use Docker `latest` tag convention
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
+        echo VERSION=$VERSION
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
     - name: Push app image
+      run: |
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
+    outputs:
+      keysImage: ${{ steps.image.outputs.image }}
+  build-iut:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+    runs-on: ubuntu-latest
+    steps:
+    # - uses: actions/checkout@v6
+    # - name: Build app image
+    #   run: docker build . -f deploy/etos-iut/Dockerfile --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
       id: image
       run: |
         IMAGE_ID=ghcr.io/eiffel-community/etos-iut
-        # Strip git ref prefix from version
         VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
         [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
         # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
         echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
+    - name: Push app image
+      run: |
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
     outputs:
-      iutVersion: ${{ steps.image.outputs.version }}
-  build_executionspace:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
+      iutImage: ${{ steps.image.outputs.image }}
+  build-executionspace:
+    # if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
     runs-on: ubuntu-latest
     steps:
-    - uses: actions/checkout@v3
-    - name: Build app image
-      run: docker build . -f deploy/etos-executionspace/Dockerfile --tag image
-
-    - name: Login to GitHub Container Registry
-      uses: docker/login-action@v3
-      with:
-        registry: ghcr.io
-        username: ${{ github.actor }}
-        password: ${{ secrets.GITHUB_TOKEN }}
-
-    - name: Push app image
+    # - uses: actions/checkout@v6
+    # - name: Build app image                     
+    #   run: docker build . -f deploy/etos-executionspace/Dockerfile --tag image
+    # - name: Login to GitHub Container Registry
+    #   uses: docker/login-action@v3
+    #   with:
+    #     registry: ghcr.io
+    #     username: ${{ github.actor }}
+    #     password: ${{ secrets.GITHUB_TOKEN }}
+    - name: Image ID
       id: image
       run: |
         IMAGE_ID=ghcr.io/eiffel-community/etos-executionspace
-        # Strip git ref prefix from version
         VERSION=$(echo "${{ github.ref }}" | sed -e 's,.*/\(.*\),\1,')
-        # Strip "v" prefix from tag name
         [[ "${{ github.ref }}" == "refs/tags/"* ]] && VERSION=$(echo $VERSION | sed -e 's/^v//')
         # Use Docker `latest` tag convention
-        [ "$VERSION" == "main" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
-        echo IMAGE_ID=$IMAGE_ID
+        [ "$VERSION" == "$MAIN_BRANCH" ] && VERSION=$(echo ${{ github.sha }} | cut -c1-8)
         echo VERSION=$VERSION
-        docker tag image $IMAGE_ID:$VERSION
-        docker push $IMAGE_ID:$VERSION
-        echo $IMAGE_ID:$VERSION
-        echo "::set-output name=version::$VERSION"
+        echo "image=$IMAGE_ID:$VERSION" >> $GITHUB_OUTPUT
+    - name: Push app image
+      run: |
+        # docker tag image ${{ steps.image.outputs.image }}
+        echo "Pushing image ${{ steps.image.outputs.image }}"
+        # docker push ${{ steps.image.outputs.image }}
     outputs:
-      executionSpaceVersion: ${{ steps.image.outputs.version }}
-  update_manifests:
-    if: ${{ github.event_name == 'workflow_dispatch' || github.event.pull_request.merged == true }}
-    runs-on: ubuntu-latest
-    needs: [build_api, build_sse, build_keys, build_logarea, build_iut, build_executionspace]
-    steps:
-    - uses: actions/checkout@v3
-    - name: Update manifests
-      uses: fjogeleit/yaml-update-action@main
-      with:
-        changes: |
-          {
-            "manifests/base/sse/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-sse:${{ needs.build_sse.outputs.sseVersion }}"
-            },
-            "manifests/base/keys/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-keys:${{ needs.build_keys.outputs.keysVersion }}"
-            },
-            "manifests/base/api/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-api:${{ needs.build_api.outputs.apiVersion }}"
-            },
-            "manifests/base/logarea/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-logarea:${{ needs.build_logarea.outputs.logAreaVersion }}"
-            },
-            "manifests/base/iut/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-iut:${{ needs.build_iut.outputs.iutVersion }}"
-            },
-            "manifests/base/executionspace/deployment.yaml": {
-              "spec.template.spec.containers[0].image": "ghcr.io/eiffel-community/etos-executionspace:${{ needs.build_executionspace.outputs.executionSpaceVersion }}"
-            }
-          }
-        branch: main
-        commitChange: true
-        message: |
-          Updating ETOS images:
-            - SSE: ${{ needs.build_sse.outputs.sseVersion }}
-            - KeyService: ${{ needs.build_keys.outputs.keysVersion }}
-            - LogArea: ${{ needs.build_logarea.outputs.logAreaVersion }}
-            - IUT: ${{ needs.build_iut.outputs.iutVersion }}
-            - Execution Space: ${{ needs.build_executionspace.outputs.executionSpaceVersion }}
-            - API: ${{ needs.build_api.outputs.apiVersion }}
+      executionSpaceImage: ${{ steps.image.outputs.image }}
+  run-update-etos-defaults:
+    needs: [build-api, build-sse, build-logarea]
+    uses: ./.github/workflows/update-etos.yaml
+    secrets: inherit
+    with:
+      api-image: ${{ needs.build-api.outputs.apiImage }}
+      sse-image: ${{ needs.build-sse.outputs.sseImage }}
+      logarea-image: ${{ needs.build-logarea.outputs.logareaImage }}
