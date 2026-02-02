@@ -76,7 +76,7 @@ jobs:
       uses: peter-evans/create-pull-request@v8
       with:
         token: ${{ steps.generate-token.outputs.token }}
-        commit-message: $(echo "$env.COMMIT_MESSAGE" | base64 --decode)
+        commit-message: ${{ env.COMMIT_MESSAGE }}
         title: "Integrate \"${{ env.COMMIT_MESSAGE_HEADER }}\""
         body: "Automated update of ETOS images for API, SSE, and LogArea\n
 
