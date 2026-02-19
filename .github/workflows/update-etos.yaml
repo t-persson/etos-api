@@ -62,14 +62,8 @@ jobs:
         token: ${{ steps.generate-token.outputs.token }}
         changes: |
           {
-            "config/crd/defaults/api.yaml": {
-              ".[0].value": "${{ inputs.api-image }}"
-            },
-            "config/crd/defaults/sse.yaml": {
-              ".[0].value": "${{ inputs.sse-image }}"
-            },
-            "config/crd/defaults/logarea.yaml": {
-              ".[0].value": "${{ inputs.logarea-image }}"
+            "defaults/api.yaml": {
+              ".version": "${{ inputs.api-image }}"
             }
           }
     - name: Create Pull Request
