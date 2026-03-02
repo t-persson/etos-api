@@ -20,6 +20,7 @@ import (
 	"errors"
 	"fmt"
 	"path/filepath"
+	"strings"
 
 	"github.com/eiffel-community/etos-api/pkg/executionspace/executionspace"
 	"github.com/sirupsen/logrus"
@@ -231,11 +232,31 @@ func (k KubernetesExecutor) Alive(ctx context.Context, logger *logrus.Entry, id 
 	jobs := k.client.BatchV1().Jobs(k.namespace)
 	job, err := jobs.Get(ctx, id, metav1.GetOptions{})
 	if err != nil {
+		logger.Errorf("Get job error: %s", err)
 		return false, err
 	}
 	pod, err := k.podFromJob(ctx, job)
 	if err != nil {
+		logger.Errorf("Get pod error: %s", err)
 		return false, err
 	}
-	return isReady(pod), nil
+	ready := isReady(pod)
+	if !ready {
+		pods := k.client.CoreV1().Pods(k.namespace)
+		result := pods.GetLogs(pod.ObjectMeta.Name, &corev1.PodLogOptions{}).Do(ctx)
+		if result.Error() != nil {
+			logger.Errorf("Error getting logs from pod: %s", result.Error())
+			return ready, nil
+		}
+		logs, err := result.Raw()
+		if err != nil {
+			logger.Errorf("Error reading logs from pod: %s", err)
+		} else {
+			splitLogs := strings.Split(string(logs), "\n")
+			for _, line := range splitLogs {
+				logger.WithField("user_log", true).Info(line)
+			}
+		}
+	}
+	return ready, nil
 }
