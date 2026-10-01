@@ -29,6 +29,7 @@ import (
 
 	"github.com/eiffel-community/etos-api/internal/config"
 	"github.com/eiffel-community/etos-api/internal/logging"
+	"github.com/eiffel-community/etos-api/internal/metrics"
 	"github.com/eiffel-community/etos-api/internal/server"
 	"github.com/eiffel-community/etos-api/internal/stream"
 	"github.com/eiffel-community/etos-api/pkg/application"
@@ -68,6 +69,7 @@ func main() {
 	})
 
 	log.Info("Loading SSE routes")
+	sseMetrics := metrics.NewSSEMetrics(os.Getenv("ETOS_VERSION"))
 	v1AlphaSSE := v1alpha.New(cfg, log, ctx)
 	defer v1AlphaSSE.Close()
 	v1SSE := v1.New(cfg, log, ctx)
@@ -104,9 +106,10 @@ func main() {
 	if err != nil {
 		log.Fatal(err.Error())
 	}
-	v2AlphaSSE := v2alpha.New(ctx, cfg, log, streamer)
+	v2AlphaSSE := v2alpha.New(ctx, cfg, log, streamer, sseMetrics)
 	defer v2AlphaSSE.Close()
 	app = application.New(v1AlphaSSE, v1SSE, v2AlphaSSE)
+	app.Handler(http.MethodGet, "/metrics", sseMetrics.Handler())
 
 	srv := server.NewWebService(cfg, log, app)
 

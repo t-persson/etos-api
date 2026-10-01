@@ -22,7 +22,9 @@ import time
 
 from etos_api.library.graphql import GraphqlQueryHandler
 from etos_api.library.graphql_queries import ARTIFACT_IDENTITY_QUERY, VERIFY_ARTIFACT_ID_EXISTS
+from etos_api.library.metrics import ArtifactLookup
 
+API_VERSION = "v1beta1"
 LOGGER = logging.getLogger(__name__)
 
 
@@ -55,16 +57,24 @@ async def wait_for_artifact_created(etos_library, artifact_identity, artifact_id
         raise ValueError("'artifact_id' and 'artifact_identity' are both None!")
     artifact_identifier = artifact_identity or str(artifact_id)
 
+    lookup = ArtifactLookup(API_VERSION, artifact_id)
     LOGGER.debug("Wait for artifact created event.")
     while time.time() < timeout:
         try:
             artifacts = await query_handler.execute(query % artifact_identifier)
             assert artifacts is not None
             assert artifacts["artifactCreated"]["edges"]
-            return artifacts["artifactCreated"]["edges"]
         except (AssertionError, KeyError):
+            lookup.attempt("not_ready")
             LOGGER.warning("Artifact created not ready yet")
+        except Exception:
+            lookup.attempt("error", final=True)
+            raise
+        else:
+            lookup.attempt("found", final=True)
+            return artifacts["artifactCreated"]["edges"]
         await asyncio.sleep(2)
+    lookup.finish("not_found")
     LOGGER.error("Artifact %r not found.", artifact_identifier)
     return None
 

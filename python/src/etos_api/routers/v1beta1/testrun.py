@@ -27,7 +27,6 @@ from etos_lib.kubernetes import TestRun as TestRunClient
 from etos_lib.kubernetes.schemas.v1beta1.testrun import Metadata, Providers, Retention, Suite
 from etos_lib.kubernetes.schemas.v1beta1.testrun import TestRun as TestRunSchema
 from etos_lib.kubernetes.schemas.v1beta1.testrun import TestRunSpec
-from fastapi import HTTPException
 from opentelemetry import baggage as otel_baggage
 from opentelemetry import context as otel_context
 from opentelemetry.propagate import inject
@@ -36,6 +35,7 @@ from pydantic import BaseModel
 from yaml import safe_load
 
 from etos_api.library.docker import Docker
+from etos_api.library.metrics import SubmissionFailed
 
 from .schemas import StartTestrunRequest
 from .utilities import convert_to_rfc1123, wait_for_artifact_created
@@ -129,22 +129,25 @@ class TestRun:
             artifact = await wait_for_artifact_created(self.etos_library, identity, artifact_id)
         except TimeoutError as error:
             self.logger.warning("Timeout error while waiting for artifact.")
-            raise HTTPException(
+            raise SubmissionFailed(
+                "artifact_lookup_timeout",
                 status_code=504,
                 detail=(f"Timeout waiting for artifact {identity or artifact_id}, retry in 30s"),
                 headers={"Retry-After": "30"},
             ) from error
         except Exception as exception:  # pylint:disable=broad-except
             self.logger.critical(exception)
-            raise HTTPException(
-                status_code=400, detail=f"Could not connect to GraphQL. {exception}"
+            raise SubmissionFailed(
+                "event_repository_error",
+                status_code=400,
+                detail=f"Could not connect to GraphQL. {exception}",
             ) from exception
         if artifact is None:
             if artifact_id is not None:
                 detail = f"Artifact with ID '{artifact_id}' not found in the Event Repository."
             else:
                 detail = f"Artifact with identity '{identity}' not found in the Event Repository."
-            raise HTTPException(status_code=400, detail=detail)
+            raise SubmissionFailed("artifact_not_found", status_code=400, detail=detail)
         # There are assumptions here. Since "edges" list is already tested
         # and we know that the return from GraphQL must be 'node'.'meta'.'id'
         # if there are "edges", this is fine.
@@ -239,7 +242,9 @@ class TestRun:
         )
         testrun_client = TestRunClient(kubernetes)
         if not testrun_client.create(testrun):
-            raise HTTPException(status_code=500, detail="Failed to create testrun")
+            raise SubmissionFailed(
+                "testrun_create_failed", status_code=500, detail="Failed to create testrun"
+            )
         self.logger.info("ETOS triggered successfully")
 
     async def delete(self, suite_id: str) -> bool:

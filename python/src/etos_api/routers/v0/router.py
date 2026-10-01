@@ -32,7 +32,13 @@ from opentelemetry.trace import Span
 from starlette.responses import RedirectResponse, Response
 
 from etos_api.library.environment import Configuration, configure_testrun
-from etos_api.library.metrics import COUNT_REQUESTS, OPERATIONS, REQUEST_TIME
+from etos_api.library.metrics import (
+    COUNT_REQUESTS,
+    OPERATIONS,
+    SubmissionFailed,
+    TestRunSubmission,
+    count_invalid_submissions,
+)
 from etos_api.library.opentelemetry import context
 from etos_api.library.utilities import sync_to_async
 
@@ -53,6 +59,7 @@ START_LABELS = {"endpoint": API, "operation": OPERATIONS.start_testrun.name}
 # we don't want to set the actual value in the metrics label since that would create
 # a high cardinality metric. Therefore we use the literal string "{suite_id}".
 STOP_LABELS = {"endpoint": f"{API}/{{suite_id}}", "operation": OPERATIONS.stop_testrun.name}
+count_invalid_submissions(ETOSV0, "/etos")
 
 TRACER = trace.get_tracer("etos_api.routers.etos.router")
 LOGGER = logging.getLogger(__name__)
@@ -60,9 +67,8 @@ logging.getLogger("pika").setLevel(logging.WARNING)
 # pylint:disable=too-many-locals,too-many-statements
 
 
-@REQUEST_TIME.labels(**START_LABELS).time()
-@COUNT_REQUESTS(START_LABELS, LOGGER)
 @ETOSV0.post("/etos", tags=["etos"], response_model=StartEtosResponse)
+@COUNT_REQUESTS(START_LABELS, LOGGER)
 async def start_etos(
     etos: StartEtosRequest,
     ctx: Annotated[otel_context.Context, Depends(context)],
@@ -77,12 +83,12 @@ async def start_etos(
     :rtype: dict
     """
     with TRACER.start_as_current_span("start-etos", context=ctx) as span:
-        return await _start(etos, span, otel_context.get_current())
+        with TestRunSubmission(ETOSV0.version) as submission:
+            return await _start(etos, span, otel_context.get_current(), submission)
 
 
-@REQUEST_TIME.labels(**STOP_LABELS).time()
-@COUNT_REQUESTS(STOP_LABELS, LOGGER)
 @ETOSV0.delete("/etos/{suite_id}", tags=["etos"], response_model=AbortEtosResponse)
+@COUNT_REQUESTS(STOP_LABELS, LOGGER)
 async def abort_etos(suite_id: str, ctx: Annotated[otel_context.Context, Depends(context)]) -> dict:
     """Abort ETOS execution on delete.
 
@@ -119,12 +125,18 @@ async def oldping():
     return RedirectResponse("/api/ping")
 
 
-async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) -> dict:
+async def _start(
+    etos: StartEtosRequest,
+    span: Span,
+    ctx: otel_context.Context,
+    submission: TestRunSubmission,
+) -> dict:
     """Start ETOS execution.
 
     :param etos: ETOS pydantic model.
     :param span: An opentelemetry span for tracing.
     :param ctx: OpenTelemetry context with extracted headers.
+    :param submission: Submission metrics recorder.
     :return: JSON dictionary with response.
     """
     tercc = EiffelTestExecutionRecipeCollectionCreatedEvent()
@@ -137,8 +149,10 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
 
     LOGGER.info("Validating test suite.")
     span.set_attribute("etos.test_suite.uri", etos.test_suite_url)
+    submission.stage("suite_invalid")
     await validate_suite(etos.test_suite_url)
     LOGGER.info("Test suite validated.")
+    submission.stage("internal_error")
 
     etos_library = ETOS("ETOS API", os.getenv("HOSTNAME"), "ETOS API")
     await sync_to_async(etos_library.config.rabbitmq_publisher_from_environment)
@@ -150,7 +164,8 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
         )
     except TimeoutError as error:
         LOGGER.warning("Timeout error while waiting for artifact.")
-        raise HTTPException(
+        raise SubmissionFailed(
+            "artifact_lookup_timeout",
             status_code=504,
             detail=(
                 f"Timeout waiting for artifact {etos.artifact_identity or etos.artifact_id}, "
@@ -160,8 +175,10 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
         ) from error
     except Exception as exception:  # pylint:disable=broad-except
         LOGGER.critical(exception)
-        raise HTTPException(
-            status_code=400, detail=f"Could not connect to GraphQL. {exception}"
+        raise SubmissionFailed(
+            "event_repository_error",
+            status_code=400,
+            detail=f"Could not connect to GraphQL. {exception}",
         ) from exception
     if artifact is None:
         if etos.artifact_id is not None:
@@ -171,7 +188,7 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
                 f"Artifact with identity '{etos.artifact_identity}' not found"
                 " in the Event Repository."
             )
-        raise HTTPException(status_code=400, detail=detail)
+        raise SubmissionFailed("artifact_not_found", status_code=400, detail=detail)
     LOGGER.info("Found artifact created %r", artifact)
     # There are assumptions here. Since "edges" list is already tested
     # and we know that the return from GraphQL must be 'node'.'meta'.'id'
@@ -197,6 +214,7 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
         iut_provider=etos.iut_provider,
         log_area_provider=etos.log_area_provider,
     )
+    submission.stage("environment_configuration_failed")
     try:
         # etcd lease expiration will have 10 minutes safety margin:
         etcd_lease_expiration_time = etos_library.debug.default_test_result_timeout + 10 * 60
@@ -208,11 +226,13 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
             detail=f"Could not configure environment provider. {exception}",
         ) from exception
     LOGGER.info("Environment provider configured.")
+    submission.stage("internal_error")
 
     ctx = otel_baggage.set_baggage("testrun_id", tercc.meta.event_id, context=ctx)
     ctx = otel_baggage.set_baggage("artifact_id", artifact_id, context=ctx)
 
     LOGGER.info("Start event publisher.")
+    submission.stage("event_publish_failed")
     await sync_to_async(etos_library.start_publisher)
     if not etos_library.debug.disable_sending_events:
         await sync_to_async(etos_library.publisher.wait_start)
@@ -226,6 +246,7 @@ async def _start(etos: StartEtosRequest, span: Span, ctx: otel_context.Context) 
             await sync_to_async(etos_library.publisher.stop)
             await sync_to_async(etos_library.publisher.wait_close)
     LOGGER.info("Event published.")
+    submission.stage("internal_error")
 
     LOGGER.info("ETOS triggered successfully.")
     return {

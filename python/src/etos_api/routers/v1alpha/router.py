@@ -34,7 +34,13 @@ from opentelemetry.propagate import inject
 from opentelemetry.trace import Span
 from starlette.responses import Response
 
-from etos_api.library.metrics import COUNT_REQUESTS, OPERATIONS, REQUEST_TIME
+from etos_api.library.metrics import (
+    COUNT_REQUESTS,
+    OPERATIONS,
+    SubmissionFailed,
+    TestRunSubmission,
+    count_invalid_submissions,
+)
 from etos_api.library.opentelemetry import context
 
 from .schemas import AbortTestrunResponse, StartTestrunRequest, StartTestrunResponse
@@ -64,6 +70,7 @@ SUBSUITE_LABELS = {
     "endpoint": f"{API}/{{suite_id}}",
     "operation": OPERATIONS.get_subsuite.name,
 }
+count_invalid_submissions(ETOSV1ALPHA, "/testrun")
 
 TRACER = trace.get_tracer("etos_api.routers.testrun.router")
 LOGGER = logging.getLogger(__name__)
@@ -71,9 +78,8 @@ logging.getLogger("pika").setLevel(logging.WARNING)
 # pylint:disable=too-many-locals,too-many-statements
 
 
-@REQUEST_TIME.labels(**START_LABELS).time()
-@COUNT_REQUESTS(START_LABELS, LOGGER)
 @ETOSV1ALPHA.post("/testrun", tags=["etos"], response_model=StartTestrunResponse)
+@COUNT_REQUESTS(START_LABELS, LOGGER)
 async def start_testrun(
     etos: StartTestrunRequest, ctx: Annotated[otel_context.Context, Depends(context)]
 ) -> dict:
@@ -87,12 +93,12 @@ async def start_testrun(
     :rtype: dict
     """
     with TRACER.start_as_current_span("start-etos", context=ctx) as span:
-        return await _create_testrun(etos, span, otel_context.get_current())
+        with TestRunSubmission(ETOSV1ALPHA.version) as submission:
+            return await _create_testrun(etos, span, otel_context.get_current(), submission)
 
 
-@REQUEST_TIME.labels(**STOP_LABELS).time()
-@COUNT_REQUESTS(STOP_LABELS, LOGGER)
 @ETOSV1ALPHA.delete("/testrun/{suite_id}", tags=["etos"], response_model=AbortTestrunResponse)
+@COUNT_REQUESTS(STOP_LABELS, LOGGER)
 async def abort_testrun(
     suite_id: str, ctx: Annotated[otel_context.Context, Depends(context)]
 ) -> dict:
@@ -112,9 +118,8 @@ async def abort_testrun(
 # The key {suite_id} is supposed to indicate that this is a path parameter, but
 # we don't want to set the actual value in the metrics label since that would create
 # a high cardinality metric. Therefore we use the literal string "{suite_id}".
-@REQUEST_TIME.labels(**SUBSUITE_LABELS).time()
-@COUNT_REQUESTS(SUBSUITE_LABELS, LOGGER)
 @ETOSV1ALPHA.get("/testrun/{sub_suite_id}", tags=["etos"])
+@COUNT_REQUESTS(SUBSUITE_LABELS, LOGGER)
 async def get_subsuite(sub_suite_id: str) -> dict:
     """Get sub suite returns the sub suite definition for the ETOS test runner.
 
@@ -140,12 +145,18 @@ async def health_check():
     return Response(status_code=204)
 
 
-async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_context.Context) -> dict:
+async def _create_testrun(
+    etos: StartTestrunRequest,
+    span: Span,
+    ctx: otel_context.Context,
+    submission: TestRunSubmission,
+) -> dict:
     """Create a testrun for ETOS to execute.
 
     :param etos: Testrun pydantic model.
     :param span: An opentelemetry span for tracing.
     :param ctx: OpenTelemetry context with extracted headers.
+    :param submission: Submission metrics recorder.
     :return: JSON dictionary with response.
     """
     testrun_id = str(uuid4())
@@ -154,13 +165,16 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
     span.set_attribute("etos.version", ETOSV1ALPHA.version)
 
     LOGGER.info("Download test suite.")
+    submission.stage("suite_download_failed")
     span.set_attribute("etos.test_suite.uri", etos.test_suite_url)
     test_suite = await download_suite(etos.test_suite_url)
     LOGGER.info("Test suite downloaded.")
 
     LOGGER.info("Validating test suite.")
+    submission.stage("suite_invalid")
     await validate_suite(test_suite)
     LOGGER.info("Test suite validated.")
+    submission.stage("internal_error")
 
     etos_library = ETOS("ETOS API", os.getenv("HOSTNAME", "localhost"), "ETOS API")
 
@@ -171,7 +185,8 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
         )
     except TimeoutError as error:
         LOGGER.warning("Timeout error while waiting for artifact.")
-        raise HTTPException(
+        raise SubmissionFailed(
+            "artifact_lookup_timeout",
             status_code=504,
             detail=(
                 f"Timeout waiting for artifact {etos.artifact_identity or etos.artifact_id}, "
@@ -181,8 +196,10 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
         ) from error
     except Exception as exception:  # pylint:disable=broad-except
         LOGGER.critical(exception)
-        raise HTTPException(
-            status_code=400, detail=f"Could not connect to GraphQL. {exception}"
+        raise SubmissionFailed(
+            "event_repository_error",
+            status_code=400,
+            detail=f"Could not connect to GraphQL. {exception}",
         ) from exception
     if artifact is None:
         if etos.artifact_id is not None:
@@ -192,7 +209,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
                 f"Artifact with identity '{etos.artifact_identity}' not found"
                 " in the Event Repository."
             )
-        raise HTTPException(status_code=400, detail=detail)
+        raise SubmissionFailed("artifact_not_found", status_code=400, detail=detail)
     LOGGER.info("Found artifact created %r", artifact)
     # There are assumptions here. Since "edges" list is already tested
     # and we know that the return from GraphQL must be 'node'.'meta'.'id'
@@ -203,6 +220,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
     span.set_attribute("etos.artifact.id", artifact_id)
     span.set_attribute("etos.artifact.identity", identity)
 
+    submission.stage("suite_invalid")
     try:
         # Since the TERCC that we use can have multiple names, it's quite difficult to get a
         # single name that describes the entire TERCC. However ETOS mostly only gets a single
@@ -223,6 +241,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
     except (IndexError, TypeError, ValueError):
         name = f"testrun-{testrun_id}-"
         LOGGER.error("Could not get name from test suite, defaulting to %s", name)
+    submission.stage("internal_error")
 
     retention = Retention(
         failure=os.getenv("TESTRUN_FAILURE_RETENTION"),
@@ -246,6 +265,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
         annotations["etos.eiffel-community.github.io/baggage"] = carrier["baggage"]
 
     kubernetes = Kubernetes()
+    submission.stage("suite_invalid")
     testrun_spec = TestRunSchema(
         metadata=Metadata(
             generateName=name,
@@ -296,9 +316,11 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
         ),
     )
 
+    submission.stage("testrun_create_failed")
     testrun_client = TestRun(kubernetes)
     if not testrun_client.create(testrun_spec):
         raise HTTPException(status_code=500, detail="Failed to create testrun")
+    submission.stage("internal_error")
 
     LOGGER.info("ETOS triggered successfully.")
     return {

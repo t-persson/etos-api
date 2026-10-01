@@ -25,6 +25,7 @@ import (
 	"time"
 
 	"github.com/eiffel-community/etos-api/internal/config"
+	ssemetrics "github.com/eiffel-community/etos-api/internal/metrics"
 	"github.com/eiffel-community/etos-api/internal/stream"
 	"github.com/eiffel-community/etos-api/pkg/application"
 	"github.com/eiffel-community/etos-api/pkg/events"
@@ -42,6 +43,7 @@ type Application struct {
 	ctx      context.Context
 	cancel   context.CancelFunc
 	streamer stream.Streamer
+	metrics  *ssemetrics.SSEMetrics
 }
 
 type Handler struct {
@@ -49,6 +51,7 @@ type Handler struct {
 	cfg      config.SSEConfig
 	ctx      context.Context
 	streamer stream.Streamer
+	metrics  *ssemetrics.SSEMetrics
 }
 
 // Close cancels the application context.
@@ -58,7 +61,7 @@ func (a *Application) Close() {
 }
 
 // New returns a new Application object/struct.
-func New(ctx context.Context, cfg config.SSEConfig, log *logrus.Entry, streamer stream.Streamer) application.Application {
+func New(ctx context.Context, cfg config.SSEConfig, log *logrus.Entry, streamer stream.Streamer, metrics *ssemetrics.SSEMetrics) application.Application {
 	ctx, cancel := context.WithCancel(ctx)
 	return &Application{
 		logger:   log,
@@ -66,12 +69,13 @@ func New(ctx context.Context, cfg config.SSEConfig, log *logrus.Entry, streamer 
 		ctx:      ctx,
 		cancel:   cancel,
 		streamer: streamer,
+		metrics:  metrics,
 	}
 }
 
 // LoadRoutes loads all the v2alpha routes.
 func (a Application) LoadRoutes(router *httprouter.Router) {
-	handler := &Handler{a.logger, a.cfg, a.ctx, a.streamer}
+	handler := &Handler{a.logger, a.cfg, a.ctx, a.streamer, a.metrics}
 	router.GET("/sse/v2alpha/selftest/ping", handler.Selftest)
 	router.GET("/sse/v2alpha/events/:identifier", handler.GetEvents)
 }
@@ -111,7 +115,7 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 	if err != nil {
 		logger.WithError(err).Error("failed to start consuming stream")
 		b, _ := json.Marshal(ErrorEvent{Retry: false, Reason: err.Error()})
-		ch <- events.Event{Event: "error", Data: string(b)}
+		sendEvent(ctx, ch, events.Event{Event: "error", Data: string(b)})
 		return
 	}
 	defer streamer.Close()
@@ -125,11 +129,13 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 			logger.Info("Client lost, closing subscriber")
 			return
 		case <-ping.C:
-			ch <- events.Event{Event: "ping"}
+			if !sendEvent(ctx, ch, events.Event{Event: "ping"}) {
+				return
+			}
 		case <-closed:
 			logger.Info("Stream closed, closing down")
 			b, _ := json.Marshal(ErrorEvent{Retry: true, Reason: "Streamer closed the connection"})
-			ch <- events.Event{Event: "error", Data: string(b)}
+			sendEvent(ctx, ch, events.Event{Event: "error", Data: string(b)})
 			return
 		case msg := <-consumeCh:
 			// We have no reliable way of getting a specific offset on the SSE stream so
@@ -142,17 +148,42 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 			event, err = events.New(msg)
 			if err != nil {
 				logger.WithError(err).Error("failed to parse SSE event")
+				h.metrics.EventDropped(eventType(msg), "parse_error")
 				continue
 			}
 			if err := schema.Validate(msg); err != nil {
 				logger.WithError(err).Warning("dropping SSE event that does not match the protocol")
+				h.metrics.EventDropped(event.Event, "schema_invalid")
 				continue
 			}
 			event.ID = counter
-			ch <- event
+			if !sendEvent(ctx, ch, event) {
+				return
+			}
 			counter++
 		}
 	}
+}
+
+// sendEvent stops a subscriber instead of blocking after its HTTP handler exits.
+func sendEvent(ctx context.Context, ch chan<- events.Event, event events.Event) bool {
+	select {
+	case ch <- event:
+		return true
+	case <-ctx.Done():
+		return false
+	}
+}
+
+// eventType extracts only the event discriminator for bounded drop metrics.
+func eventType(data []byte) string {
+	var event struct {
+		Event string `json:"event"`
+	}
+	if err := json.Unmarshal(data, &event); err != nil {
+		return "unknown"
+	}
+	return event.Event
 }
 
 // GetEvents is an endpoint for streaming events and logs from ETOS.
@@ -177,6 +208,7 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 	if lastEventID != "" {
 		var err error
 		lastID, err = strconv.Atoi(lastEventID)
+		h.metrics.Reconnect(err == nil)
 		if err != nil {
 			logger.Error("Last-Event-ID header is not parsable")
 		}
@@ -201,12 +233,18 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 	}
 	logger.Info("Client connected to SSE")
 
+	ctx, cancel := context.WithCancel(r.Context())
+	defer cancel()
 	receiver := make(chan events.Event) // Channel is closed in Subscriber
-	go h.subscribe(r.Context(), logger, streamer, receiver, lastID, filter)
+	go h.subscribe(ctx, logger, streamer, receiver, lastID, filter)
+	terminalResultWritten := false
 
 	for {
 		select {
 		case <-r.Context().Done():
+			if h.ctx.Err() == nil && !terminalResultWritten {
+				h.metrics.Disconnect("request_context_cancelled")
+			}
 			logger.Info("Client gone from SSE")
 			return
 		case <-h.ctx.Done():
@@ -218,9 +256,34 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 			}
 			if err := event.Write(w); err != nil {
 				logger.Error(err)
-				continue
+				h.metrics.EventDelivery(event.Event, false)
+				h.metrics.Disconnect("write_error")
+				if event.Event == "shutdown" {
+					h.metrics.TerminalResult("write_error")
+				}
+				if retryable(event) {
+					h.metrics.Retry(false)
+				}
+				return
 			}
 			flusher.Flush()
+			h.metrics.EventDelivery(event.Event, true)
+			if event.Event == "shutdown" {
+				h.metrics.TerminalResult("write_success")
+				terminalResultWritten = true
+			}
+			if retryable(event) {
+				h.metrics.Retry(true)
+			}
 		}
 	}
+}
+
+// retryable reports whether an error event asks the client to reconnect.
+func retryable(event events.Event) bool {
+	if event.Event != "error" {
+		return false
+	}
+	var errorEvent ErrorEvent
+	return json.Unmarshal([]byte(event.Data), &errorEvent) == nil && errorEvent.Retry
 }
