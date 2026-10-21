@@ -257,7 +257,7 @@ func TestSSEGetEventsShuttingDown(t *testing.T) {
 	log := logrus.WithFields(logrus.Fields{})
 	streamer, err := stream.NewFileStreamer(100*time.Millisecond, log)
 	assert.NoError(t, err)
-	handler := Handler{log, &cfg{}, appCtx, streamer, metrics.NewSSEMetrics()}
+	handler := Handler{logger: log, cfg: &cfg{}, ctx: appCtx, streamer: streamer, metrics: metrics.NewSSEMetrics()}
 	responseRecorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/v2alpha/events/test_sse_shutting_down", nil)
 	ps := httprouter.Params{httprouter.Param{Key: "identifier", Value: "test_sse_shutting_down"}}
@@ -281,7 +281,7 @@ func TestSSEGetEventsShutdownAbortsStream(t *testing.T) {
 	log := logrus.WithFields(logrus.Fields{})
 	streamer, err := stream.NewFileStreamer(10*time.Millisecond, log)
 	assert.NoError(t, err)
-	handler := Handler{log, &cfg{}, appCtx, streamer, metrics.NewSSEMetrics()}
+	handler := Handler{logger: log, cfg: &cfg{}, ctx: appCtx, streamer: streamer, metrics: metrics.NewSSEMetrics()}
 	router := httprouter.New()
 	router.GET("/v2alpha/events/:identifier", handler.GetEvents)
 	server := httptest.NewServer(router)
@@ -546,7 +546,7 @@ func getEvents(t *testing.T, testrunID string, lines string, lastEventID string)
 	log := logrus.WithFields(logrus.Fields{})
 	streamer, err := stream.NewFileStreamer(10*time.Millisecond, log)
 	assert.NoError(t, err)
-	handler := Handler{log, &cfg{}, context.Background(), streamer, metrics.NewSSEMetrics()}
+	handler := Handler{logger: log, cfg: &cfg{}, ctx: context.Background(), streamer: streamer, metrics: metrics.NewSSEMetrics()}
 	responseRecorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", fmt.Sprintf("/v2alpha/events/%s", testrunID), nil)
 	if lastEventID != "" {
@@ -641,7 +641,7 @@ func getFakeEvents(t *testing.T, fake *fakeStream, lastEventID string, timeout t
 	ctx, done := context.WithTimeout(context.Background(), timeout)
 	defer done()
 	log := logrus.WithFields(logrus.Fields{})
-	handler := Handler{log, &cfg{}, context.Background(), fakeStreamer{fake}, metrics.NewSSEMetrics()}
+	handler := Handler{logger: log, cfg: &cfg{}, ctx: context.Background(), streamer: fakeStreamer{fake}, metrics: metrics.NewSSEMetrics()}
 	responseRecorder := httptest.NewRecorder()
 	request := httptest.NewRequest("GET", "/v2alpha/events/fake", nil)
 	if lastEventID != "" {

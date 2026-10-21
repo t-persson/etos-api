@@ -35,6 +35,8 @@ import (
 	"github.com/julienschmidt/httprouter"
 
 	"github.com/sirupsen/logrus"
+	"go.opentelemetry.io/otel/attribute"
+	"go.opentelemetry.io/otel/trace"
 )
 
 // pingInterval is a variable so that tests can shorten it.
@@ -48,6 +50,7 @@ type Application struct {
 	cancel   context.CancelFunc
 	streamer stream.Streamer
 	metrics  *metrics.SSEMetrics
+	tracer   trace.Tracer
 }
 
 // Handler streams v2alpha events and records bounded service telemetry.
@@ -57,6 +60,7 @@ type Handler struct {
 	ctx      context.Context
 	streamer stream.Streamer
 	metrics  *metrics.SSEMetrics
+	tracer   trace.Tracer
 }
 
 // Close cancels the application context.
@@ -83,7 +87,10 @@ func New(ctx context.Context, cfg config.SSEConfig, log *logrus.Entry, streamer 
 
 // LoadRoutes loads all the v2alpha routes.
 func (a *Application) LoadRoutes(router *httprouter.Router) {
-	handler := &Handler{a.logger, a.cfg, a.ctx, a.streamer, a.metrics}
+	handler := &Handler{
+		logger: a.logger, cfg: a.cfg, ctx: a.ctx, streamer: a.streamer,
+		metrics: a.metrics, tracer: a.tracer,
+	}
 	router.GET("/sse/v2alpha/selftest/ping", a.metrics.Wrap("/sse/v2alpha/selftest/ping", http.MethodGet, handler.Selftest))
 	router.GET("/sse/v2alpha/events/:identifier", a.metrics.Wrap("/sse/v2alpha/events/:identifier", http.MethodGet, handler.GetEvents))
 }
@@ -164,6 +171,9 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 	offset, retry, reason, err := resumeOffset(streamer, lastID)
 	if reason != "" {
 		logger.WithError(err).WithField("lastEventID", lastID).Error("Could not resume the event stream")
+		if retry {
+			h.traceFailure(ctx, "backend_failure")
+		}
 		sendError(ctx, ch, retry, reason)
 		return
 	}
@@ -174,6 +184,7 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 	closed, err := streamer.WithChannel(consumeCh).WithOffset(offset).WithFilter(filter).Consume(ctx)
 	if err != nil {
 		logger.WithError(err).Error("failed to start consuming stream")
+		h.traceFailure(ctx, "backend_failure")
 		h.metrics.StreamError("backend_failure")
 		sendError(ctx, ch, true, "failed to consume the event stream")
 		return
@@ -215,6 +226,7 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 				return
 			}
 			logger.Info("Stream closed, closing down")
+			h.traceFailure(ctx, "backend_failure")
 			sendError(ctx, ch, true, "Streamer closed the connection")
 			return
 		case msg := <-consumeCh:
@@ -241,6 +253,16 @@ func (h Handler) subscribe(ctx context.Context, logger *logrus.Entry, streamer s
 // GetEvents is an endpoint for streaming events and logs from ETOS.
 func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 	identifier := ps.ByName("identifier")
+	r, span := h.startSpan(r, identifier)
+	status := http.StatusOK
+	closeReason := "subscriber_shutdown"
+	defer func() {
+		span.SetAttributes(
+			attribute.Int("http.response.status_code", status),
+			attribute.String("etos.sse.close_reason", closeReason),
+		)
+		span.End()
+	}()
 	// Filters may be passed multiple times (?filter=log.info&filter=log.debug)
 	// in order to parse multiple values into a slice r.ParseForm() is used.
 	// The filters are accessible in r.Form["filter"] after r.ParseForm() has been
@@ -269,6 +291,7 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 
 	if h.ctx.Err() != nil {
 		logger.Info("Shutting down, not starting a new stream")
+		status, closeReason = http.StatusServiceUnavailable, "server_shutdown"
 		http.Error(w, "server is shutting down", http.StatusServiceUnavailable)
 		return
 	}
@@ -282,6 +305,12 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 		// client request, so report it as retryable and keep the details out of the response.
 		logger.WithError(err).Error("Could not start a new stream")
 		h.metrics.StreamError("backend_failure")
+		status, closeReason = http.StatusServiceUnavailable, "backend_failure"
+		if r.Context().Err() == nil {
+			h.traceFailure(r.Context(), "backend_failure")
+		} else {
+			closeReason = "client_disconnect"
+		}
 		http.Error(w, "event stream is temporarily unavailable", http.StatusServiceUnavailable)
 		return
 	}
@@ -290,12 +319,13 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 	if !ok {
 		streamer.Close()
 		h.metrics.StreamError("protocol_unsupported")
+		status, closeReason = http.StatusNotFound, "protocol_unsupported"
+		h.traceFailure(r.Context(), "protocol_unsupported")
 		http.NotFound(w, r)
 		return
 	}
 	logger.Info("Client connected to SSE")
 	h.metrics.ConnectionOpened()
-	closeReason := "subscriber_shutdown"
 	defer func() { h.metrics.ConnectionClosedWithReason(closeReason) }()
 
 	ctx, cancel := context.WithCancel(r.Context())
@@ -321,12 +351,20 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 			return
 		case event, ok := <-receiver:
 			if !ok {
+				if h.ctx.Err() != nil {
+					closeReason = "server_shutdown"
+					panic(http.ErrAbortHandler)
+				}
+				if ctx.Err() != nil {
+					closeReason = "client_disconnect"
+				}
 				return
 			}
 			if err := event.Write(w); err != nil {
 				logger.WithError(err).Error("failed to write SSE event")
 				h.metrics.StreamError("stream_write_error")
 				closeReason = "stream_write_error"
+				h.traceFailure(ctx, "stream_write_error")
 				return
 			}
 			h.metrics.EventDelivered(event.Event)

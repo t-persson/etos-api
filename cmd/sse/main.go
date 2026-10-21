@@ -32,6 +32,7 @@ import (
 	"github.com/eiffel-community/etos-api/internal/metrics"
 	"github.com/eiffel-community/etos-api/internal/server"
 	"github.com/eiffel-community/etos-api/internal/stream"
+	"github.com/eiffel-community/etos-api/internal/tracing"
 	"github.com/eiffel-community/etos-api/pkg/application"
 	v1 "github.com/eiffel-community/etos-api/pkg/sse/v1"
 	v1alpha "github.com/eiffel-community/etos-api/pkg/sse/v1alpha"
@@ -84,6 +85,17 @@ func main() {
 	}()
 
 	log.Info("Loading SSE routes")
+	tracer, shutdownTraces, err := tracing.Setup(ctx, "etos-sse", vcsRevision())
+	if err != nil {
+		log.WithError(err).Warning("failed to set up OpenTelemetry tracing")
+	}
+	defer func() {
+		flushCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
+		defer cancel()
+		if err := shutdownTraces(flushCtx); err != nil {
+			log.WithError(err).Warning("failed to flush OpenTelemetry tracing")
+		}
+	}()
 	telemetry := metrics.NewSSEMetrics()
 	v1AlphaSSE := v1alpha.New(cfg, log, ctx)
 	defer v1AlphaSSE.Close()
@@ -126,6 +138,9 @@ func main() {
 	v2alphaCtx, stopV2alphaStreams := context.WithCancel(ctx)
 	defer stopV2alphaStreams()
 	v2AlphaSSE := v2alpha.New(v2alphaCtx, cfg, log, streamer, telemetry)
+	if tracer != nil {
+		v2AlphaSSE.WithTracing(tracer)
+	}
 	defer v2AlphaSSE.Close()
 	app = application.New(v1AlphaSSE, v1SSE, v2AlphaSSE)
 
