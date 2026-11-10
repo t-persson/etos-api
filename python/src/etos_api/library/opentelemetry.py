@@ -44,6 +44,7 @@ from opentelemetry.trace.propagation.tracecontext import TraceContextTextMapProp
 from pydantic import BaseModel
 
 from etos_api.library.cluster import cluster_identity
+from etos_api.library.metrics import initialize_counters
 
 LOGGER = logging.getLogger(__name__)
 # Health probes are periodic infrastructure requests, not user operations.
@@ -88,6 +89,7 @@ def setup_runtime_metrics(resource: Resource) -> MeterProvider:
     reader = PeriodicExportingMetricReader(OTLPMetricExporter())
     meter_provider = MeterProvider(resource=resource, metric_readers=[reader])
     metrics.set_meter_provider(meter_provider)
+    initialize_counters()
     SystemMetricsInstrumentor().instrument(meter_provider=meter_provider)
     return meter_provider
 

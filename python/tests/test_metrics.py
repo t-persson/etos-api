@@ -28,7 +28,12 @@ from opentelemetry.sdk.metrics import MeterProvider
 from opentelemetry.sdk.metrics.export import InMemoryMetricReader
 
 from etos_api.library import metrics as etos_metrics
-from etos_api.library.metrics import COUNT_REQUESTS, outcome_for_status, record_suite_operation
+from etos_api.library.metrics import (
+    COUNT_REQUESTS,
+    OPERATIONS,
+    outcome_for_status,
+    record_suite_operation,
+)
 from etos_api.main import APP
 
 LABELS = {"endpoint": "/api/v1beta1/testrun", "operation": "start_testrun"}
@@ -93,6 +98,62 @@ def fixture_otel(monkeypatch):
 def fixture_client():
     """Test client for the ETOS API."""
     return TestClient(APP, raise_server_exceptions=False)
+
+
+def test_idle_counters_export_zeros_without_duration_observations(otel: MetricsReader) -> None:
+    """Verify startup exposes real zero counters before any requests or suite operations.
+
+    :param otel: SDK-backed metric reader.
+    """
+    etos_metrics.initialize_counters()
+
+    suite_points = otel.points("etos_api.suite.operations")
+    assert len(suite_points) == 12
+    for point in suite_points:
+        assert point.value == 0
+        assert point.attributes["etos_cluster"] == "unassigned"
+        assert point.attributes["api_version"] in ("v1alpha", "v1beta1")
+        assert point.attributes["operation"] in etos_metrics.SUITE_OPERATION_NAMES
+        assert point.attributes["outcome"] in etos_metrics.SUITE_OPERATION_OUTCOMES
+
+    http_points = otel.points("etos_api.http.requests")
+    assert http_points
+    for point in http_points:
+        assert point.value == 0
+        assert point.attributes["status"] == "500"
+        assert point.attributes["etos_cluster"] == "unassigned"
+        assert set(point.attributes) == {"endpoint", "operation", "status", "etos_cluster"}
+        assert point.attributes["operation"] in OPERATIONS.__members__
+    assert not otel.points("etos_api.suite.operation.duration")
+    assert not otel.points("etos_api.http.request.duration")
+    assert not otel.points("etos_api.requests")
+
+
+def test_counter_initialization_preserves_first_failure(
+    otel: MetricsReader, client: TestClient
+) -> None:
+    """Verify reinitializing counters cannot reset or invent failures.
+
+    :param otel: SDK-backed metric reader.
+    :param client: Local API test client.
+    """
+    etos_metrics.initialize_counters()
+    assert get_subsuite(client, MagicMock(side_effect=RuntimeError("boom"))) == 500
+    record_suite_operation("v1beta1", "suite_download", "server_error", 0.1)
+    etos_metrics.initialize_counters()
+
+    assert otel.count("etos_api.http.requests", **SUBSUITE_LABELS, status="500") == 1
+    assert (
+        otel.count(
+            "etos_api.suite.operations",
+            api_version="v1beta1",
+            operation="suite_download",
+            outcome="server_error",
+        )
+        == 1
+    )
+    assert otel.count("etos_api.http.request.duration", **SUBSUITE_LABELS) == 1
+    assert otel.count("etos_api.suite.operation.duration") == 1
 
 
 def get_subsuite(client: TestClient, get_mock: MagicMock) -> int:
