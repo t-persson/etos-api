@@ -63,6 +63,9 @@ func TestSetupFlushesRuntimeMetrics(t *testing.T) {
 	t.Setenv("OTEL_EXPORTER_OTLP_METRICS_ENDPOINT", "")
 	t.Setenv("OTEL_METRIC_EXPORT_INTERVAL", "3600000")
 	t.Setenv("OTEL_RESOURCE_ATTRIBUTES", "deployment.environment.name=test")
+	t.Setenv("ETOS_NAMESPACE", "metrics-test")
+	t.Setenv("ETOS_CLUSTER", "cluster-test")
+	expectedCluster := clusterAttribute().Value.AsString()
 	shutdown, err := Setup(context.Background(), "etos-sse", "abc1234")
 	require.NoError(t, err)
 
@@ -82,6 +85,7 @@ func TestSetupFlushesRuntimeMetrics(t *testing.T) {
 			require.Equal(t, "etos-sse", attributes["service.name"])
 			require.Equal(t, "abc1234", attributes["service.version"])
 			require.Equal(t, "test", attributes["deployment.environment.name"])
+			require.Equal(t, expectedCluster, attributes["etos_cluster"])
 			for _, scope := range resourceMetrics.ScopeMetrics {
 				for _, metric := range scope.Metrics {
 					names = append(names, metric.Name)

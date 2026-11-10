@@ -47,6 +47,7 @@ func Setup(ctx context.Context, serviceName, serviceVersion string) (func(contex
 		resource.WithAttributes(
 			semconv.ServiceName(serviceName),
 			semconv.ServiceVersion(serviceVersion),
+			clusterAttribute(),
 		),
 		resource.WithFromEnv(),
 		resource.WithProcess(),
