@@ -252,7 +252,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
             # 63 is the max length, 5 is the random characters added by generateName and
             # 1 is to be able to fit a hyphen at the end so we truncate to 57 to fit everything.
             name = f"{name[:57]}-"
-    except (IndexError, TypeError, ValueError):
+    except IndexError, TypeError, ValueError:
         name = f"testrun-{testrun_id}-"
         LOGGER.error("Could not get name from test suite, defaulting to %s", name)
 
