@@ -1,12 +1,12 @@
-FROM python:3.13-trixie AS build
+FROM python:3.15-trixie AS build
 
 COPY .git /src/.git
 COPY .gitignore /src/.gitignore
 COPY python /src/python
 WORKDIR /src/python
-RUN pip install --no-cache-dir build==1.3.0 && python3 -m build
+RUN pip install --no-cache-dir build==1.6.1 && python3 -m build
 
-FROM python:3.13-slim-trixie
+FROM python:3.15-slim-trixie
 ARG TZ
 ENV TZ=$TZ
 

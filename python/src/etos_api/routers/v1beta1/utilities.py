@@ -62,7 +62,7 @@ async def wait_for_artifact_created(etos_library, artifact_identity, artifact_id
             assert artifacts is not None
             assert artifacts["artifactCreated"]["edges"]
             return artifacts["artifactCreated"]["edges"]
-        except (AssertionError, KeyError):
+        except AssertionError, KeyError:
             LOGGER.warning("Artifact created not ready yet")
         await asyncio.sleep(2)
     LOGGER.error("Artifact %r not found.", artifact_identifier)
