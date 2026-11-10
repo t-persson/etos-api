@@ -76,7 +76,7 @@ class TestValidator:
         try:
             await validator.validate(test_suite)
             exception = False
-        except (AssertionError, AssertionError):
+        except AssertionError, AssertionError:
             exception = True
         self.logger.info("STEP: Verify that no exceptions were raised.")
         assert exception is False
