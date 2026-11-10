@@ -100,6 +100,27 @@ INSTRUMENTS = create_instruments(metrics.get_meter("etos_api"))
 
 SUITE_OPERATION_NAMES = ("suite_download", "suite_validation")
 SUITE_OPERATION_OUTCOMES = ("success", "client_error", "server_error")
+SUITE_API_VERSIONS = ("v1alpha", "v1beta1")
+_HTTP_REQUEST_LABELS: list[dict[str, str]] = []
+
+
+def initialize_counters() -> None:
+    """Expose idle counters after meter-provider setup, without recording durations."""
+    cluster = cluster_identity()
+    for api_version in SUITE_API_VERSIONS:
+        for operation in SUITE_OPERATION_NAMES:
+            for outcome in SUITE_OPERATION_OUTCOMES:
+                INSTRUMENTS.suite_operations.add(
+                    0,
+                    {
+                        "etos_cluster": cluster,
+                        "api_version": api_version,
+                        "operation": operation,
+                        "outcome": outcome,
+                    },
+                )
+    for labels in _HTTP_REQUEST_LABELS:
+        INSTRUMENTS.requests.add(0, {**labels, "status": "500", "etos_cluster": cluster})
 
 
 def outcome_for_status(status_code: int) -> str:
@@ -119,7 +140,7 @@ def outcome_for_status(status_code: int) -> str:
 
 def record_suite_operation(api_version: str, operation: str, outcome: str, duration: float) -> None:
     """Record one bounded suite admission operation observation."""
-    if api_version not in ("v1alpha", "v1beta1"):
+    if api_version not in SUITE_API_VERSIONS:
         raise ValueError(f"Unsupported API version: {api_version}")
     if operation not in SUITE_OPERATION_NAMES:
         raise ValueError(f"Unsupported suite operation: {operation}")
@@ -147,6 +168,7 @@ def COUNT_REQUESTS(labels: dict, logger: Logger, api_version: str):  # pylint:di
     The decorator also records the request duration. A synchronous timing decorator must not be
     used on the async route handlers because it returns the un-awaited coroutine to FastAPI.
     """
+    _HTTP_REQUEST_LABELS.append(dict(labels))
 
     def decorator(func: Callable):
         @wraps(func)
