@@ -129,7 +129,7 @@ func (h SSEHandler) Subscribe(ch chan<- events.Event, logger *logrus.Entry, ctx 
 }
 
 // GetFrom gets all events from an ESR instance
-func GetFrom(ctx context.Context, url string) ([]string, error) {
+func GetFrom(ctx context.Context, url string) (_ []string, resultErr error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -142,7 +142,11 @@ func GetFrom(ctx context.Context, url string) ([]string, error) {
 
 	var messages []string
 	scanner := bufio.NewScanner(response.Body)
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close log response: %w", err))
+		}
+	}()
 	for scanner.Scan() {
 		messages = append(messages, scanner.Text())
 	}
@@ -156,7 +160,7 @@ func (h SSEHandler) url(ctx context.Context, identifier string) (string, error) 
 		return "", err
 	}
 	if ip == "" {
-		return "", errors.New("No IP from ESR yet")
+		return "", errors.New("no IP from ESR yet")
 	}
 	return fmt.Sprintf("http://%s:8000/log", ip), nil
 }
@@ -176,7 +180,9 @@ func forceKillConnection(w http.ResponseWriter, logger *logrus.Entry) {
 		http.Error(w, http.StatusText(http.StatusInternalServerError), http.StatusInternalServerError)
 		return
 	}
-	connection.Close()
+	if err := connection.Close(); err != nil {
+		logger.Errorf("failed to close hijacked connection: %v", err)
+	}
 }
 
 // GetEvents is an endpoint for streaming events and logs from an ESR instance.

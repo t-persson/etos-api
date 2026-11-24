@@ -50,6 +50,7 @@ func TestCreateNew(t *testing.T) {
 	assert.NoError(t, err)
 	cfg := testcfg{private: priv, public: pub}
 	authorizer, err := auth.NewAuthorizer(pub, priv)
+	assert.NoError(t, err)
 	handler := Handler{log, cfg, context.Background(), authorizer}
 
 	responseRecorder := httptest.NewRecorder()
@@ -75,6 +76,7 @@ func TestCreateNewWrongScope(t *testing.T) {
 	assert.NoError(t, err)
 	cfg := testcfg{private: priv, public: pub}
 	authorizer, err := auth.NewAuthorizer(pub, priv)
+	assert.NoError(t, err)
 	handler := Handler{log, cfg, context.Background(), authorizer}
 
 	responseRecorder := httptest.NewRecorder()

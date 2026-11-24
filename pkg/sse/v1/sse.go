@@ -125,7 +125,7 @@ func (h SSEHandler) Subscribe(ch chan<- events.Event, logger *logrus.Entry, ctx 
 }
 
 // GetFrom gets all events from an ESR instance starting from id (including the id specified).
-func GetFrom(ctx context.Context, url string, id string) ([]events.Event, error) {
+func GetFrom(ctx context.Context, url string, id string) (_ []events.Event, resultErr error) {
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
 		return nil, err
@@ -138,7 +138,11 @@ func GetFrom(ctx context.Context, url string, id string) ([]events.Event, error)
 	if err != nil {
 		return nil, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close event response: %w", err))
+		}
+	}()
 
 	etosEvents := []events.Event{}
 	scanner := bufio.NewScanner(response.Body)
@@ -154,7 +158,7 @@ func GetFrom(ctx context.Context, url string, id string) ([]events.Event, error)
 }
 
 // GetOne gets a single event from an ESR instance.
-func GetOne(ctx context.Context, logger *logrus.Entry, url string, id string) (events.Event, error) {
+func GetOne(ctx context.Context, logger *logrus.Entry, url string, id string) (_ events.Event, resultErr error) {
 	event := events.Event{}
 	request, err := http.NewRequestWithContext(ctx, http.MethodGet, url, nil)
 	if err != nil {
@@ -169,7 +173,11 @@ func GetOne(ctx context.Context, logger *logrus.Entry, url string, id string) (e
 	if err != nil {
 		return event, err
 	}
-	defer response.Body.Close()
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close event response: %w", err))
+		}
+	}()
 
 	body, err := io.ReadAll(response.Body)
 	if err != nil {

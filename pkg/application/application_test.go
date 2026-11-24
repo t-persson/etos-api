@@ -16,7 +16,7 @@
 package application
 
 import (
-	"fmt"
+	"log"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -32,7 +32,9 @@ type testApp struct {
 
 // testRoute is a test route that prints a test message from the app to which it is "attached".
 func (t *testApp) testRoute(w http.ResponseWriter, r *http.Request, _ httprouter.Params) {
-	fmt.Fprint(w, t.message)
+	if _, err := w.Write([]byte(t.message)); err != nil {
+		log.Printf("failed to write test response: %v", err)
+	}
 }
 
 // LoadRoutes from the application to which it is "attached".

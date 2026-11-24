@@ -140,7 +140,11 @@ func (h V1Alpha1Handler) Start(w http.ResponseWriter, r *http.Request, ps httpro
 		RespondWithError(w, http.StatusBadRequest, err.Error())
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			logger.Errorf("failed to close request body: %v", err)
+		}
+	}()
 	purl, err := packageurl.FromString(startReq.ArtifactIdentity)
 	if err != nil {
 		logger.Errorf("Failed to create a purl struct from artifact identity: %s", startReq.ArtifactIdentity)
@@ -181,6 +185,10 @@ func (h V1Alpha1Handler) Status(w http.ResponseWriter, r *http.Request, ps httpr
 	logger := h.logger.WithField("identifier", identifier).WithContext(r.Context())
 
 	id, err := uuid.Parse(r.URL.Query().Get("id"))
+	if err != nil {
+		RespondWithError(w, http.StatusBadRequest, "invalid status id")
+		return
+	}
 	client := h.database.Open(r.Context(), identifier)
 
 	data, err := io.ReadAll(client)

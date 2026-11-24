@@ -19,6 +19,7 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 
@@ -112,7 +113,7 @@ func EnvironmentDefined(ctx context.Context, eventRepositoryURL string, id strin
 }
 
 // getEvents queries the event repository and returns the response for others to parse
-func getEvents(ctx context.Context, eventRepositoryURL string, query map[string]string) ([]byte, error) {
+func getEvents(ctx context.Context, eventRepositoryURL string, query map[string]string) (_ []byte, resultErr error) {
 	req, err := http.NewRequestWithContext(ctx, "GET", eventRepositoryURL, nil)
 	if err != nil {
 		return nil, err
@@ -128,11 +129,15 @@ func getEvents(ctx context.Context, eventRepositoryURL string, query map[string]
 	if err != nil {
 		return nil, err
 	}
+	defer func() {
+		if err := response.Body.Close(); err != nil {
+			resultErr = errors.Join(resultErr, fmt.Errorf("close event repository response: %w", err))
+		}
+	}()
 	if response.StatusCode == 404 {
 		return nil, errors.New("event not found in event repository")
 	}
 
-	defer response.Body.Close()
 	body, err := io.ReadAll(response.Body)
 	if err != nil {
 		return nil, err

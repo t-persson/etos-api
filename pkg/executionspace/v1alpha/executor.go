@@ -56,9 +56,13 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 
 	executorName := h.provider.Executor().Name()
 	request := startRequest{}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			logger.Errorf("failed to close request body: %v", err)
+		}
+	}()
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
-		msg := fmt.Errorf("There was an error when preparing the %s execution space", executorName)
+		msg := fmt.Errorf("there was an error when preparing the %s execution space", executorName)
 		logger.WithField("user_log", true).Error(msg)
 		h.recordOtelException(span, msg)
 		RespondWithError(w, http.StatusBadRequest, "could not read ID from post body")
@@ -67,7 +71,7 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 
 	executor, err := h.provider.ExecutorSpec(ctx, request.ID)
 	if err != nil {
-		msg := fmt.Errorf("Timed out when reading the %s execution space configuration from database", executorName)
+		msg := fmt.Errorf("timed out when reading the %s execution space configuration from database", executorName)
 		if ctx.Err() != nil {
 			logger.WithField("user_log", true).Error(msg)
 			h.recordOtelException(span, msg)
@@ -84,13 +88,13 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 	id, err := h.provider.Executor().Start(ctx, logger, executor)
 	if err != nil {
 		if ctx.Err() != nil {
-			msg := fmt.Errorf("Timed out when trying to start the test execution job")
+			msg := fmt.Errorf("timed out when trying to start the test execution job")
 			RespondWithError(w, http.StatusRequestTimeout, msg.Error())
 			logger.WithField("user_log", true).Error(msg)
 			h.recordOtelException(span, msg)
 			return
 		}
-		msg := fmt.Errorf("Error trying to start the test execution job: %s", err.Error())
+		msg := fmt.Errorf("error trying to start the test execution job: %s", err.Error())
 		RespondWithError(w, http.StatusInternalServerError, msg.Error())
 		logger.WithField("user_log", true).Error(msg)
 		h.recordOtelException(span, msg)
@@ -105,13 +109,13 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 			h.recordOtelException(span, msg)
 		}
 		if ctx.Err() != nil {
-			msg := fmt.Errorf("Timed out when waiting for the test execution job to start - Error: %s", err.Error())
+			msg := fmt.Errorf("timed out when waiting for the test execution job to start - Error: %s", err.Error())
 			RespondWithError(w, http.StatusRequestTimeout, msg.Error())
 			logger.WithField("user_log", true).Error(msg)
 			h.recordOtelException(span, msg)
 			return
 		}
-		msg := fmt.Errorf("Error when waiting for the test execution job to start - Error: %s", err.Error())
+		msg := fmt.Errorf("error when waiting for the test execution job to start - Error: %s", err.Error())
 		RespondWithError(w, http.StatusInternalServerError, msg.Error())
 		logger.WithField("user_log", true).Error(msg)
 		h.recordOtelException(span, msg)
@@ -127,13 +131,13 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 			h.recordOtelException(span, msg)
 		}
 		if ctx.Err() != nil {
-			msg := fmt.Errorf("Timed out when saving the test execution configuration")
+			msg := fmt.Errorf("timed out when saving the test execution configuration")
 			RespondWithError(w, http.StatusRequestTimeout, msg.Error())
 			logger.WithField("user_log", true).Error(msg)
 			h.recordOtelException(span, msg)
 			return
 		}
-		msg := fmt.Errorf("Error when saving the test execution configuration")
+		msg := fmt.Errorf("error when saving the test execution configuration")
 		RespondWithError(w, http.StatusInternalServerError, msg.Error())
 		logger.WithField("user_log", true).Error(msg)
 		h.recordOtelException(span, msg)
@@ -147,13 +151,13 @@ func (h ProviderServiceHandler) ExecutorStart(w http.ResponseWriter, r *http.Req
 			logger.Error(msg)
 		}
 		if ctx.Err() != nil {
-			msg := fmt.Errorf("Timed out when waiting for the test execution job to initialize - Error: %s", err.Error())
+			msg := fmt.Errorf("timed out when waiting for the test execution job to initialize - Error: %s", err.Error())
 			RespondWithError(w, http.StatusRequestTimeout, msg.Error())
 			logger.WithField("user_log", true).Error(msg)
 			h.recordOtelException(span, msg)
 			return
 		}
-		msg := fmt.Errorf("Error when waiting for the test execution job to initialize - Error: %s", err.Error())
+		msg := fmt.Errorf("error when waiting for the test execution job to initialize - Error: %s", err.Error())
 		RespondWithError(w, http.StatusBadRequest, msg.Error())
 		logger.WithField("user_log", true).Error(msg)
 		h.recordOtelException(span, msg)

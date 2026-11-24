@@ -250,7 +250,7 @@ func (h ProviderServiceHandler) Status(w http.ResponseWriter, r *http.Request, p
 
 	id, err := uuid.Parse(r.URL.Query().Get("id"))
 	if err != nil {
-		msg := fmt.Errorf("Error parsing id parameter in status request - Reason: %s", err.Error())
+		msg := fmt.Errorf("error parsing id parameter in status request - Reason: %s", err.Error())
 		logger.Error(msg)
 		h.recordOtelException(span, msg)
 		sendError(w, httperrors.NewHTTPError(msg, http.StatusBadRequest))
@@ -259,7 +259,7 @@ func (h ProviderServiceHandler) Status(w http.ResponseWriter, r *http.Request, p
 
 	executionSpace, err := h.provider.Status(logger, ctx, id)
 	if err != nil {
-		msg := fmt.Errorf("Failed to retrieve execution space status (id=%s) - Reason: %s", id, err.Error())
+		msg := fmt.Errorf("failed to retrieve execution space status (id=%s) - Reason: %s", id, err.Error())
 		logger.Error(msg.Error())
 		h.recordOtelException(span, msg)
 		RespondWithJSON(w, http.StatusInternalServerError, executionSpace)
@@ -282,7 +282,7 @@ func (h ProviderServiceHandler) Stop(w http.ResponseWriter, r *http.Request, ps 
 	logger := h.logger.WithField("identifier", identifier).WithContext(r.Context())
 
 	ctx := h.getOtelContext(context.Background(), r)
-	ctx, span := h.getOtelTracer().Start(ctx, "stop", trace.WithSpanKind(trace.SpanKindServer))
+	_, span := h.getOtelTracer().Start(ctx, "stop", trace.WithSpanKind(trace.SpanKindServer))
 	defer span.End()
 
 	executors, err := executionspace.LoadExecutorSpecs(r.Body)
@@ -293,7 +293,11 @@ func (h ProviderServiceHandler) Stop(w http.ResponseWriter, r *http.Request, ps 
 		sendError(w, httperrors.NewHTTPError(msg, http.StatusBadRequest))
 		return
 	}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			logger.Errorf("failed to close request body: %v", err)
+		}
+	}()
 
 	err = nil
 
@@ -316,14 +320,14 @@ func (h ProviderServiceHandler) Stop(w http.ResponseWriter, r *http.Request, ps 
 		if stopErr := h.provider.Executor().Stop(r.Context(), logger, id); stopErr != nil {
 			success = false
 			err = errors.Join(err, stopErr)
-			msg := fmt.Errorf("Failed to stop executor %v - Reason: %s", id, err.Error())
+			msg := fmt.Errorf("failed to stop executor %v - Reason: %s", id, err.Error())
 			logger.Error(msg)
 			h.recordOtelException(span, msg)
 		}
 		span.SetAttributes(attribute.Bool(fmt.Sprintf("etos.execution_space_provider.stop.%v", id), success))
 	}
 	if err != nil {
-		msg := fmt.Errorf("Some of the executors could not be stopped - Reason: %s", err.Error())
+		msg := fmt.Errorf("some of the executors could not be stopped - Reason: %s", err.Error())
 		logger.Error(msg)
 		h.recordOtelException(span, msg)
 		RespondWithJSON(w, http.StatusInternalServerError, err.Error())
@@ -331,7 +335,7 @@ func (h ProviderServiceHandler) Stop(w http.ResponseWriter, r *http.Request, ps 
 	}
 
 	if err := h.provider.Checkin(logger, r.Context(), executors); err != nil {
-		msg := fmt.Errorf("Failed to check in executors: %v - Reason: %s", executors, err)
+		msg := fmt.Errorf("failed to check in executors: %v - Reason: %s", executors, err)
 		logger.Error(msg)
 		h.recordOtelException(span, msg)
 		RespondWithJSON(w, http.StatusInternalServerError, msg)
@@ -353,7 +357,11 @@ func sendError(w http.ResponseWriter, err error) {
 // verifyStartInput verify input (json body) from a start request
 func (h ProviderServiceHandler) verifyStartInput(r *http.Request) (StartRequest, error) {
 	request := StartRequest{}
-	defer r.Body.Close()
+	defer func() {
+		if err := r.Body.Close(); err != nil {
+			h.logger.Errorf("failed to close request body: %v", err)
+		}
+	}()
 	if err := json.NewDecoder(r.Body).Decode(&request); err != nil {
 		return request, httperrors.NewHTTPError(
 			fmt.Errorf("unable to decode post body - Reason: %s", err.Error()),

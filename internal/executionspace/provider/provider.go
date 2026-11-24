@@ -114,7 +114,9 @@ func (e providerCore) Checkout(logger *logrus.Entry, ctx context.Context, cfg Ex
 		executor := executionspace.NewExecutorSpec(e.url, cfg.ETOSIdentifier, cfg.TestRunner, cfg.Environment, ctx)
 		executionSpace.Add(executor)
 		if err := e.SaveExecutor(ctx, executor); err != nil {
-			executionSpace.Fail(client, err)
+			if failErr := executionSpace.Fail(client, err); failErr != nil {
+				logger.Errorf("failed to write failure status to RedisDB - Reason: %s", failErr.Error())
+			}
 			return
 		}
 	}
@@ -122,7 +124,7 @@ func (e providerCore) Checkout(logger *logrus.Entry, ctx context.Context, cfg Ex
 	executionSpace.Description = "Execution spaces checked out successfully"
 
 	if err := executionSpace.Save(client); err != nil {
-		if failErr := executionSpace.Fail(client, err); err != nil {
+		if failErr := executionSpace.Fail(client, err); failErr != nil {
 			logger.Errorf("failed to write failure status to RedisDB - Reason: %s", failErr.Error())
 		}
 	}

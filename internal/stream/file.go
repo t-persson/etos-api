@@ -67,7 +67,6 @@ type FileStream struct {
 	start    int64
 	position atomic.Int64
 	channel  chan<- Message
-	filter   []string
 }
 
 // WithChannel adds a channel for receiving events from the stream. If no
@@ -106,7 +105,7 @@ func (s *FileStream) Consume(ctx context.Context) (<-chan error, error) {
 				closed <- ctx.Err()
 				return
 			case <-interval.C:
-				var isPrefix bool = true
+				isPrefix := true
 				var err error
 				var line []byte
 				var event []byte

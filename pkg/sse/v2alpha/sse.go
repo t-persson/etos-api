@@ -245,7 +245,10 @@ func (h Handler) GetEvents(w http.ResponseWriter, r *http.Request, ps httprouter
 	// in order to parse multiple values into a slice r.ParseForm() is used.
 	// The filters are accessible in r.Form["filter"] after r.ParseForm() has been
 	// called.
-	r.ParseForm()
+	if err := r.ParseForm(); err != nil {
+		http.Error(w, "invalid form data", http.StatusBadRequest)
+		return
+	}
 
 	// Making it possible for us to correlate logs to a specific connection
 	logger := h.logger.WithField("identifier", identifier)

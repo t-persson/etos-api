@@ -17,7 +17,9 @@ package rabbitmq
 
 import (
 	"context"
+	"errors"
 	"fmt"
+	"log"
 	"net/url"
 	"sync"
 	"time"
@@ -68,7 +70,9 @@ func (p *Publisher) Close() {
 	p.connMu.Lock()
 	if p.conn != nil {
 		// Closing the connection also closes p.channel and notification channels.
-		p.conn.Close()
+		if err := p.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+			log.Printf("failed to close RabbitMQ connection: %v", err)
+		}
 	}
 	p.connMu.Unlock()
 }
@@ -118,7 +122,9 @@ func (p *Publisher) ensureConnection(logger *logrus.Entry) error {
 	defer p.connMu.Unlock()
 	if p.conn == nil || p.channel == nil || p.conn.IsClosed() {
 		if p.conn != nil {
-			p.conn.Close()
+			if err := p.conn.Close(); err != nil && !errors.Is(err, amqp.ErrClosed) {
+				logger.Warnf("failed to close RabbitMQ connection: %v", err)
+			}
 		}
 		amqpURL, err := url.Parse(p.config.URL)
 		if err != nil {
@@ -136,7 +142,9 @@ func (p *Publisher) ensureConnection(logger *logrus.Entry) error {
 		if err = p.channel.Confirm(false); err != nil {
 			// Force closure of possibly healthy connection to make sure
 			// we get to set up confirms in the next ensureConnection call.
-			p.conn.Close()
+			if closeErr := p.conn.Close(); closeErr != nil && !errors.Is(closeErr, amqp.ErrClosed) {
+				logger.Warnf("failed to close RabbitMQ connection: %v", closeErr)
+			}
 			return fmt.Errorf("error enabling publisher confirms: %w", err)
 		}
 		p.hasOutstanding = false

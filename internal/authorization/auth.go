@@ -20,6 +20,7 @@ import (
 	"crypto"
 	"errors"
 	"fmt"
+	"log"
 	"net/http"
 	"time"
 
@@ -31,6 +32,22 @@ import (
 type Authorizer struct {
 	publicKey  crypto.PublicKey
 	signingKey crypto.PrivateKey
+}
+
+type scopeContextKey struct{}
+
+// ScopeFromContext returns the scope set by the authorization middleware.
+func ScopeFromContext(ctx context.Context) (scope.Scope, bool) {
+	s, ok := ctx.Value(scopeContextKey{}).(scope.Scope)
+	return s, ok
+}
+
+// respond writes an authorization error and reports a failed response write.
+func respond(w http.ResponseWriter, status int, message string) {
+	w.WriteHeader(status)
+	if _, err := fmt.Fprint(w, message); err != nil {
+		log.Printf("failed to write authorization response: %v", err)
+	}
 }
 
 var (
@@ -91,10 +108,7 @@ func (a Authorizer) VerifyToken(tokenString string) (*jwt.Token, error) {
 }
 
 // Middleware implements an httprouter middleware to use for verifying authorization header JWTs.
-// Scope is added to the context of the request and can be accessed by
-//
-//	s := r.Context().Value("scope")
-//	tokenScope, ok := s.(scope.Scope)
+// Scope is added to the request context and can be accessed with ScopeFromContext.
 func (a Authorizer) Middleware(
 	permittedScope scope.Var,
 	fn func(http.ResponseWriter, *http.Request, httprouter.Params),
@@ -102,47 +116,40 @@ func (a Authorizer) Middleware(
 	return func(w http.ResponseWriter, r *http.Request, ps httprouter.Params) {
 		tokenString := r.Header.Get("Authorization")
 		if tokenString == "" {
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, "Missing authorization header")
+			respond(w, http.StatusUnauthorized, "Missing authorization header")
 			return
 		}
 		tokenString = tokenString[len("Bearer "):]
 		token, err := a.VerifyToken(tokenString)
 		if err != nil {
 			if errors.Is(err, ErrTokenExpired) {
-				w.WriteHeader(http.StatusUnauthorized)
-				fmt.Fprint(w, "token has expired")
+				respond(w, http.StatusUnauthorized, "token has expired")
 				return
 			}
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, "invalid token")
+			respond(w, http.StatusUnauthorized, "invalid token")
 			return
 		}
 		claims, ok := token.Claims.(jwt.MapClaims)
 		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, "no valid claims in token")
+			respond(w, http.StatusUnauthorized, "no valid claims in token")
 			return
 		}
 		tokenScope, ok := claims["scope"]
 		if !ok {
-			w.WriteHeader(http.StatusUnauthorized)
-			fmt.Fprint(w, "no valid scope in token")
+			respond(w, http.StatusUnauthorized, "no valid scope in token")
 			return
 		}
 		scopeString, ok := tokenScope.(string)
 		if !ok {
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, "no valid scope in token")
+			respond(w, http.StatusForbidden, "no valid scope in token")
 			return
 		}
 		s := scope.Parse(scopeString)
 		if !s.Has(permittedScope) {
-			w.WriteHeader(http.StatusForbidden)
-			fmt.Fprint(w, "no permission to view this page")
+			respond(w, http.StatusForbidden, "no permission to view this page")
 			return
 		}
-		r = r.WithContext(context.WithValue(r.Context(), "scope", s))
+		r = r.WithContext(context.WithValue(r.Context(), scopeContextKey{}, s))
 		fn(w, r, ps)
 	}
 }

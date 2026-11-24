@@ -12,9 +12,8 @@ export DEPLOY ?= etos-sse
 PROGRAMS = sse logarea iut executionspace keys
 COMPILEDAEMON = $(GOBIN)/CompileDaemon
 GIT = git
-GOLANGCI_LINT = $(GOBIN)/golangci-lint
-
-GOLANGCI_LINT_VERSION = v1.52.2
+GOLANGCI_LINT_VERSION ?= v2.15.0
+GOLANGCI_LINT = $(GOBIN)/golangci-lint-$(GOLANGCI_LINT_VERSION)-$(shell go env GOVERSION)
 
 # Generates a rule for building a single binary from cmd/$1.
 #
@@ -113,7 +112,9 @@ $(COMPILEDAEMON):
 	go install github.com/githubnemo/CompileDaemon@v1.3.0
 
 $(GOLANGCI_LINT):
-	mkdir -p $(dir $@)
-	curl -sfL \
-			https://raw.githubusercontent.com/golangci/golangci-lint/master/install.sh \
-		| sh -s -- -b $(GOBIN) $(GOLANGCI_LINT_VERSION)
+	@mkdir -p "$(GOBIN)"
+	@set -eu; \
+	tmp=$$(mktemp -d "$(GOBIN)/.golangci-lint-XXXXXX"); \
+	trap 'rm -f "$$tmp/golangci-lint"; rmdir "$$tmp"' EXIT; \
+	GOBIN="$$tmp" go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@$(GOLANGCI_LINT_VERSION); \
+	mv "$$tmp/golangci-lint" "$@"

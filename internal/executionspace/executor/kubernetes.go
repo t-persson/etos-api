@@ -137,7 +137,7 @@ func (k KubernetesExecutor) Start(ctx context.Context, logger *logrus.Entry, exe
 		logger.WithField("user_log", true).Errorf("Create job error: %s", err)
 		return "", err
 	}
-	return job.ObjectMeta.Name, nil
+	return job.Name, nil
 }
 
 // isReady returns true if a pod is in the PodReady condition.
@@ -154,7 +154,7 @@ func isReady(pod *corev1.Pod) bool {
 func (k KubernetesExecutor) podFromJob(ctx context.Context, job *batchv1.Job) (*corev1.Pod, error) {
 	pods := k.client.CoreV1().Pods(k.namespace)
 	var pod corev1.Pod
-	podlist, err := pods.List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("job-name=%s", job.ObjectMeta.Name)})
+	podlist, err := pods.List(ctx, metav1.ListOptions{LabelSelector: fmt.Sprintf("job-name=%s", job.Name)})
 	if err != nil {
 		return &pod, err
 	}

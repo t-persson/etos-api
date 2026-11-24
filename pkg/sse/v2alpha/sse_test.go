@@ -266,14 +266,23 @@ func TestSSEGetEventsShuttingDown(t *testing.T) {
 	assert.Equal(t, http.StatusServiceUnavailable, responseRecorder.Code)
 }
 
+// TestSSEGetEventsInvalidForm rejects malformed query parameters before starting a stream.
+func TestSSEGetEventsInvalidForm(t *testing.T) {
+	handler := Handler{logger: logrus.NewEntry(logrus.New()), ctx: context.Background()}
+	recorder := httptest.NewRecorder()
+	request := httptest.NewRequest(http.MethodGet, "/v2alpha/events/run?filter=%zz", nil)
+	handler.GetEvents(recorder, request, httprouter.Params{{Key: "identifier", Value: "run"}})
+	assert.Equal(t, http.StatusBadRequest, recorder.Code)
+}
+
 // TestSSEGetEventsShutdownAbortsStream tests that an active stream is aborted, rather than
 // ended cleanly, when the application shuts down, so that clients reconnect.
 func TestSSEGetEventsShutdownAbortsStream(t *testing.T) {
 	data := []byte(`{"event":"message","data":{"message":"hello world","name":"etos","@timestamp":"2026-08-31T10:00:00Z"}}`)
 	testrunID := "test_sse_shutdown_aborts_stream"
-	os.WriteFile(testrunID, data, 0644)
+	require.NoError(t, os.WriteFile(testrunID, data, 0644))
 	defer func() {
-		os.Remove(testrunID)
+		assert.NoError(t, os.Remove(testrunID))
 	}()
 	appCtx, stop := context.WithCancel(context.Background())
 	defer stop()
@@ -289,7 +298,7 @@ func TestSSEGetEventsShutdownAbortsStream(t *testing.T) {
 
 	response, err := http.Get(fmt.Sprintf("%s/v2alpha/events/%s", server.URL, testrunID))
 	require.NoError(t, err)
-	defer response.Body.Close()
+	defer func() { assert.NoError(t, response.Body.Close()) }()
 	assert.Equal(t, http.StatusOK, response.StatusCode)
 
 	reader := bufio.NewReader(response.Body)
@@ -496,7 +505,11 @@ func TestGetEventsShutdownWithSlowWriters(t *testing.T) {
 		go func(done chan struct{}) {
 			defer close(done)
 			// Shutdown aborts the response with http.ErrAbortHandler.
-			defer func() { recover() }()
+			defer func() {
+				if got := recover(); got != nil && got != http.ErrAbortHandler {
+					t.Errorf("unexpected panic: %v", got)
+				}
+			}()
 			h.GetEvents(w, httptest.NewRequest(http.MethodGet, "/sse/v2alpha/events/run", nil),
 				httprouter.Params{{Key: "identifier", Value: "run"}})
 		}(finished[i])

@@ -97,7 +97,7 @@ func TestHTTPMetricsUsesRouteTemplates(t *testing.T) {
 	require.True(t, ok)
 	require.Equal(t, "/items/:id", route.AsString())
 	for _, kv := range pts[0].Attributes.ToSlice() {
-		require.NotContains(t, kv.Value.Emit(), "secret-id")
+		require.NotContains(t, kv.Value.String(), "secret-id")
 	}
 }
 

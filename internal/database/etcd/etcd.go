@@ -30,7 +30,7 @@ import (
 )
 
 // TODO: refactor the client so that it does not store data it fetched.
-// However, without it implementing the database.Opener interface would be more complex (methods readByte, read).
+// However, without it implementing the database.Opener interface would be more complex.
 type Etcd struct {
 	database.Deleter
 	cfg        config.Config
@@ -83,13 +83,6 @@ func (etcd Etcd) Write(p []byte) (int, error) {
 	return len(p), nil
 }
 
-// readByte reads a single byte from etcd.data and reduces the slice afterwards
-func (etcd *Etcd) readByte() byte {
-	b := etcd.data[0]
-	etcd.data = etcd.data[1:]
-	return b
-}
-
 // Read reads data from etcd and returns p bytes to user
 func (etcd *Etcd) Read(p []byte) (n int, err error) {
 	if etcd.ID == uuid.Nil {
@@ -136,7 +129,7 @@ func (etcd Etcd) Delete() error {
 	key := fmt.Sprintf("%s/%s", etcd.treePrefix, etcd.ID.String())
 	_, err := etcd.client.Delete(etcd.ctx, key)
 	if err != nil {
-		return fmt.Errorf("Failed to delete key %s: %s", key, err.Error())
+		return fmt.Errorf("failed to delete key %s: %w", key, err)
 	}
 	return nil
 }

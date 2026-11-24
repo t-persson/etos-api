@@ -27,6 +27,7 @@ import (
 	jwt "github.com/golang-jwt/jwt/v5"
 	"github.com/julienschmidt/httprouter"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // TestNewToken tests that it is possible to sign a new token with the authorizer.
@@ -35,6 +36,8 @@ func TestNewToken(t *testing.T) {
 	assert.NoError(t, err)
 	authorizer, err := NewAuthorizer(pub, priv)
 	assert.NoError(t, err)
+	publicKey, err := jwt.ParseEdPublicKeyFromPEM(pub)
+	require.NoError(t, err)
 
 	tests := []struct {
 		name  string
@@ -48,8 +51,9 @@ func TestNewToken(t *testing.T) {
 			tokenString, err := authorizer.NewToken(testCase.name, testCase.scope, time.Now().Add(time.Second*5))
 			assert.NoError(t, err)
 			token, err := jwt.Parse(tokenString, func(token *jwt.Token) (interface{}, error) {
-				return pub, nil
+				return publicKey, nil
 			})
+			require.NoError(t, err)
 			subject, err := token.Claims.GetSubject()
 			assert.NoError(t, err)
 			assert.Equal(t, subject, testCase.name)
@@ -105,8 +109,11 @@ func TestMiddleware(t *testing.T) {
 	for _, testCase := range tests {
 		t.Run(testCase.name, func(t *testing.T) {
 			var gotThrough bool
-			endpoint := func(http.ResponseWriter, *http.Request, httprouter.Params) {
+			endpoint := func(_ http.ResponseWriter, r *http.Request, _ httprouter.Params) {
 				gotThrough = true
+				actual, ok := ScopeFromContext(r.Context())
+				assert.True(t, ok)
+				assert.Equal(t, testCase.scope, actual)
 			}
 			token, err := authorizer.NewToken(testCase.name, testCase.scope, testCase.expire)
 			assert.NoError(t, err)

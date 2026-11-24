@@ -31,8 +31,6 @@ import (
 	"github.com/sirupsen/logrus"
 )
 
-const pingInterval = 15 * time.Second
-
 type Application struct {
 	logger     *logrus.Entry
 	cfg        config.KeyConfig
