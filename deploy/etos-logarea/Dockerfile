@@ -3,7 +3,7 @@ ARG BUILD_REVISION
 WORKDIR /tmp/logarea
 
 # Cache dependencies early
-RUN apk add --no-cache make=4.4.1-r4 git=2.54.0-r0
+RUN apk add --no-cache make=4.4.1-r4
 COPY go.mod go.mod
 COPY go.sum go.sum
 RUN go mod download
