@@ -19,9 +19,10 @@ COPY --from=build /src/python/dist/*.whl /tmp/
 # hadolint ignore=DL3013
 # hadolint ignore=DL3008
 RUN apt-get update && \
-    apt-get install -y gcc libc-dev tzdata --no-install-recommends && \
+    apt-get install -y gcc libc-dev libyaml-dev libyaml-0-2 tzdata --no-install-recommends && \
     pip install --no-cache-dir /tmp/*.whl && \
-    apt-get purge -y --auto-remove gcc libc-dev && \
+    apt-get purge -y --auto-remove gcc libc-dev libyaml-dev && \
+    python -c "from yaml import CSafeLoader" && \
     rm -rf /var/lib/apt/lists/*
 
 RUN groupadd -r etos && useradd -r -m -s /bin/false -g etos etos

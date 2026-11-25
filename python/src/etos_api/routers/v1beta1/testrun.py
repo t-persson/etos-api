@@ -33,7 +33,12 @@ from opentelemetry import context as otel_context
 from opentelemetry.propagate import inject
 from opentelemetry.trace import Span
 from pydantic import BaseModel
-from yaml import safe_load
+from yaml import load
+
+try:
+    from yaml import CSafeLoader as SuiteLoader
+except ImportError:
+    from yaml import SafeLoader as SuiteLoader
 
 from etos_api.library.docker import Docker
 from etos_api.library.cluster import cluster_identity
@@ -92,7 +97,7 @@ class TestRun:
         except Exception as exception:  # pylint:disable=broad-except
             raise AssertionError(f"Unable to download suite from {url}") from exception
         self.logger.info("Test suite downloaded")
-        return safe_load(content)
+        return load(content, Loader=SuiteLoader)
 
     async def validate_suite(self, test_suite: dict) -> MinimalSpec:
         """Validate the test suite against the MinimalSpec schema."""
