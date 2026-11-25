@@ -43,7 +43,7 @@ jobs:
           go-version: ${{ matrix.go-version }}
       - name: Go test
         run: make test
-  run-hadolint:
+  run-hadolint-matrix:
     name: run-hadolint (${{ matrix.image }})
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
@@ -74,7 +74,21 @@ jobs:
         with:
           dockerfile: ${{ matrix.dockerfile }}
 
-  build-docker-images:
+  run-hadolint:
+    name: run-hadolint
+    runs-on: ubuntu-latest
+    permissions: {}
+    needs: run-hadolint-matrix
+    if: ${{ always() }}
+    steps:
+      - name: Check Hadolint result
+        env:
+          RESULT: ${{ needs.run-hadolint-matrix.result }}
+        run: |
+          echo "Hadolint matrix: $RESULT"
+          test "$RESULT" = success
+
+  build-docker-images-matrix:
     name: build-docker-images (${{ matrix.image }})
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
@@ -112,3 +126,17 @@ jobs:
           context: .
           file: ${{ matrix.dockerfile }}
           build-args: ${{ matrix.build_args }}
+
+  build-docker-images:
+    name: build-docker-images
+    runs-on: ubuntu-latest
+    permissions: {}
+    needs: build-docker-images-matrix
+    if: ${{ always() }}
+    steps:
+      - name: Check Docker build result
+        env:
+          RESULT: ${{ needs.build-docker-images-matrix.result }}
+        run: |
+          echo "Docker build matrix: $RESULT"
+          test "$RESULT" = success
