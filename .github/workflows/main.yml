@@ -44,63 +44,71 @@ jobs:
       - name: Go test
         run: make test
   run-hadolint:
-    name: run-hadolint
+    name: run-hadolint (${{ matrix.image }})
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: API
+            dockerfile: Dockerfile
+          - image: SSE
+            dockerfile: deploy/etos-sse/Dockerfile
+          - image: KeyService
+            dockerfile: deploy/etos-keys/Dockerfile
+          - image: LogArea
+            dockerfile: deploy/etos-logarea/Dockerfile
+          - image: Iut
+            dockerfile: deploy/etos-iut/Dockerfile
+          - image: ExecutionSpace
+            dockerfile: deploy/etos-executionspace/Dockerfile
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under , so your job can access it
       - uses: actions/checkout@v6
 
-      - name: Run hadolint for API
+      - name: Run hadolint
         uses: hadolint/hadolint-action@v3.3.0
         with:
-          dockerfile: Dockerfile
-      - name: Run hadolint for SSE
-        uses: hadolint/hadolint-action@v3.3.0
-        with:
-          dockerfile: deploy/etos-sse/Dockerfile
-      - name: Run hadolint for KeyService
-        uses: hadolint/hadolint-action@v3.3.0
-        with:
-          dockerfile: deploy/etos-keys/Dockerfile
-      - name: Run hadolint for LogArea
-        uses: hadolint/hadolint-action@v3.3.0
-        with:
-          dockerfile: deploy/etos-logarea/Dockerfile
+          dockerfile: ${{ matrix.dockerfile }}
 
   build-docker-images:
-    name: build-docker-images
+    name: build-docker-images (${{ matrix.image }})
     # The type of runner that the job will run on
     runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - image: API
+            dockerfile: ./Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
+          - image: SSE
+            dockerfile: ./deploy/etos-sse/Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
+          - image: KeyService
+            dockerfile: ./deploy/etos-keys/Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
+          - image: LogArea
+            dockerfile: ./deploy/etos-logarea/Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
+          - image: Iut
+            dockerfile: ./deploy/etos-iut/Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
+          - image: ExecutionSpace
+            dockerfile: ./deploy/etos-executionspace/Dockerfile
+            build_args: BUILD_REVISION=${{ github.sha }}
 
     # Steps represent a sequence of tasks that will be executed as part of the job
     steps:
       # Checks-out your repository under , so your job can access it
       - uses: actions/checkout@v6
 
-      - name: Build API image
+      - name: Build image
         uses: docker/build-push-action@v7
         with:
           context: .
-          file: ./Dockerfile
-          build-args: |
-            BUILD_REVISION=${{ github.sha }}
-      - name: Build SSE image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./deploy/etos-sse/Dockerfile
-          build-args: |
-            BUILD_REVISION=${{ github.sha }}
-      - name: Build KeyService image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./deploy/etos-keys/Dockerfile
-      - name: Build LogArea image
-        uses: docker/build-push-action@v7
-        with:
-          context: .
-          file: ./deploy/etos-logarea/Dockerfile
+          file: ${{ matrix.dockerfile }}
+          build-args: ${{ matrix.build_args }}
