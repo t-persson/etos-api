@@ -73,6 +73,14 @@ jobs:
         uses: hadolint/hadolint-action@v3.3.0
         with:
           dockerfile: deploy/etos-logarea/Dockerfile
+      - name: Run hadolint for Iut
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: deploy/etos-iut/Dockerfile
+      - name: Run hadolint for ExecutionSpace
+        uses: hadolint/hadolint-action@v3.3.0
+        with:
+          dockerfile: deploy/etos-executionspace/Dockerfile
 
   build-docker-images:
     name: build-docker-images
@@ -108,3 +116,13 @@ jobs:
         with:
           context: .
           file: ./deploy/etos-logarea/Dockerfile
+      - name: Build Iut image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/etos-iut/Dockerfile
+      - name: Build ExecutionSpace image
+        uses: docker/build-push-action@v7
+        with:
+          context: .
+          file: ./deploy/etos-executionspace/Dockerfile
