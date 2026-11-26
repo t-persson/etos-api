@@ -146,12 +146,11 @@ def _environment(url: SplitResult) -> dict:
     factory = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
 
     timeout = time.time() + 10
-    print(str(url))
     print(f"Fetching environment from: {url.geturl()}")
     while time.time() < timeout:
         connection = factory(url.hostname, url.port, timeout=60)
         try:
-            connection.request("GET", url.geturl())
+            connection.request("GET", url.path)
             response = connection.getresponse()
             if response.status == 200:
                 environment = json.loads(response.read(655536))
@@ -233,8 +232,7 @@ def main() -> int:
     except (OSError, ValueError) as error:
         parser.error(str(error))
     directory = Path(os.environ.get("ARTIFACT_PATH") or ".")
-    return 0
-    # return _benchmark(config, directory / "etos-api-start-report.json")
+    return _benchmark(config, directory / "etos-api-start-report.json")
 
 
 if __name__ == "__main__":
