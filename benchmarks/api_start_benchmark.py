@@ -195,6 +195,7 @@ def main() -> int:
         help="Number of parallel POSTs in the largest burst (default: 4)",
     )
     args = parser.parse_args()
+    print(os.environ)
     if args.api == "":
         parser.error("--api or environment ETOS_API must be set")
     if args.max_concurrency < 1:
