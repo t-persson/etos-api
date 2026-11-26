@@ -144,16 +144,19 @@ def _environment(url: SplitResult) -> dict:
     """Fetch and environment from the ETOS API."""
     assert url.hostname is not None
     factory = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
-    connection = factory(url.hostname, url.port, timeout=60)
 
     timeout = time.time() + 10
     while time.time() < timeout:
-        connection.request("GET", str(url.geturl()))
-        response = connection.getresponse()
-        if response.status == 200:
-            environment = json.loads(response.read(655536))
-            return environment
-        print(f"Status code: {response.status}")
+        connection = factory(url.hostname, url.port, timeout=60)
+        try:
+            connection.request("GET", str(url.geturl()))
+            response = connection.getresponse()
+            if response.status == 200:
+                environment = json.loads(response.read(655536))
+                return environment
+            print(f"Status code: {response.status}")
+        finally:
+            connection.close()
         time.sleep(1)
     raise TimeoutError(f"timed out waiting for {url.geturl()}")
 
