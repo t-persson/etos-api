@@ -20,6 +20,7 @@ import http.client
 import json
 import os
 import threading
+import traceback
 import time
 import urllib.error
 import urllib.request
@@ -161,6 +162,7 @@ def _artifact_id_from_environment() -> str:
     try:
         return _environment(url)["artifact"]
     except (json.JSONDecodeError, KeyError):
+        traceback.print_exc()
         return ""
 
 
@@ -173,6 +175,7 @@ def _provider_from_environment(provider_key: str) -> str:
     try:
         return _environment(url)[provider_key]["provider_id"]
     except (json.JSONDecodeError, KeyError):
+        traceback.print_exc()
         return ""
 
 
@@ -196,6 +199,7 @@ def main() -> int:
     )
     args = parser.parse_args()
     print(os.environ)
+    print(os.environ["ENVIRONMENT_URL"])
     if args.api == "":
         parser.error("--api or environment ETOS_API must be set")
     if args.max_concurrency < 1:
