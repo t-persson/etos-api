@@ -20,11 +20,12 @@ from time import perf_counter
 from typing import Annotated
 
 from etos_lib.kubernetes import Environment, Kubernetes
-from fastapi import Depends, FastAPI, HTTPException
+from fastapi import Depends, FastAPI, Header, HTTPException
 from kubernetes.dynamic.exceptions import NotFoundError
 from opentelemetry import context as otel_context
 from opentelemetry import trace
 from opentelemetry.trace import Span
+from pydantic import UUID4
 from starlette.responses import Response
 
 from etos_api.library.metrics import (
@@ -33,9 +34,10 @@ from etos_api.library.metrics import (
     record_suite_operation,
 )
 from etos_api.library.opentelemetry import context
+from etos_api.library.utilities import sync_to_async
 
 from .schemas import AbortTestrunResponse, StartTestrunRequest, StartTestrunResponse
-from .testrun import TestRun
+from .testrun import IdempotentStart, TestRun
 
 ETOSV1BETA1 = FastAPI(
     title="ETOS",
@@ -65,19 +67,24 @@ logging.getLogger("pika").setLevel(logging.WARNING)
 @ETOSV1BETA1.post("/testrun", tags=["etos"], response_model=StartTestrunResponse)
 @COUNT_REQUESTS(START_LABELS, LOGGER, ETOSV1BETA1.version)
 async def start_testrun(
-    etos: StartTestrunRequest, ctx: Annotated[otel_context.Context, Depends(context)]
-) -> dict:
+    etos: StartTestrunRequest,
+    ctx: Annotated[otel_context.Context, Depends(context)],
+    idempotency_key: Annotated[UUID4 | None, Header()] = None,
+) -> StartTestrunResponse:
     """Start ETOS testrun on post.
 
     :param etos: ETOS pydantic model.
     :type etos: :obj:`etos_api.routers.etos.schemas.StartTestrunRequest`
     :param ctx: OpenTelemetry context with extracted headers.
     :type ctx: :obj:`opentelemetry.context.Context`
-    :return: JSON dictionary with response.
-    :rtype: dict
+    :param idempotency_key: Optional key identifying one logical start.
+    :return: The start response.
     """
     with TRACER.start_as_current_span("start-etos", context=ctx) as span:
-        return await _create_testrun(etos, span, otel_context.get_current())
+        start = (
+            None if idempotency_key is None else IdempotentStart.from_request(idempotency_key, etos)
+        )
+        return await _create_testrun(etos, span, otel_context.get_current(), start)
 
 
 @ETOSV1BETA1.delete("/testrun/{suite_id}", tags=["etos"], response_model=AbortTestrunResponse)
@@ -126,13 +133,19 @@ async def health_check():
     return Response(status_code=204)
 
 
-async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_context.Context) -> dict:
+async def _create_testrun(
+    etos: StartTestrunRequest,
+    span: Span,
+    ctx: otel_context.Context,
+    start: IdempotentStart | None,
+) -> StartTestrunResponse:
     """Create a testrun for ETOS to execute.
 
     :param etos: Testrun pydantic model.
     :param span: An opentelemetry span for tracing.
     :param ctx: OpenTelemetry context with extracted headers.
-    :return: JSON dictionary with response.
+    :param start: Idempotency metadata if the client provided a key.
+    :return: The start response.
     """
     testrun = TestRun(span)
 
@@ -165,6 +178,11 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
         "v1beta1", "suite_validation", "success", perf_counter() - validation_started
     )
 
+    if start is not None:
+        previous = await sync_to_async(TestRun.replay, start, testrun_spec.name)
+        if previous is not None:
+            return previous
+
     datasets = etos.dataset
     if isinstance(datasets, list):
         if len(datasets) != len(testrun_spec.suites):
@@ -184,15 +202,7 @@ async def _create_testrun(etos: StartTestrunRequest, span: Span, ctx: otel_conte
             suite.dataset.update(dataset)
 
     artifact = await testrun.wait_for_artifact(str(etos.artifact_id), etos.artifact_identity)
-    testrun_name = await testrun.generate_name(testrun_spec.name)
-    await testrun.create(ctx, etos, testrun_name, artifact, testrun_spec)
-
-    return {
-        "tercc": testrun.testrun_id,
-        "artifact_id": artifact.artifact_id,
-        "artifact_identity": artifact.identity,
-        "event_repository": testrun.etos_library.debug.graphql_server,
-    }
+    return await testrun.create(ctx, etos, artifact, testrun_spec, start=start)
 
 
 async def _abort(suite_id: str, span: Span) -> dict:

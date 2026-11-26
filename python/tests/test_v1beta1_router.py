@@ -18,12 +18,16 @@
 import logging
 import sys
 from unittest import TestCase
-from unittest.mock import AsyncMock, patch
+from unittest.mock import AsyncMock, Mock, patch
+from uuid import uuid4
 
 from fastapi.testclient import TestClient
+from kubernetes.client.exceptions import ApiException
+from kubernetes.dynamic.exceptions import ConflictError, NotFoundError
 
 from etos_api.main import APP
-from etos_api.routers.v1beta1.testrun import Artifact
+from etos_api.routers.v1beta1.schemas import StartTestrunRequest, StartTestrunResponse
+from etos_api.routers.v1beta1.testrun import Artifact, IdempotentStart
 
 logging.basicConfig(level=logging.DEBUG, stream=sys.stdout)
 
@@ -73,7 +77,17 @@ class TestV1Beta1Router(TestCase):
                 "etos_api.routers.v1beta1.testrun.TestRun.wait_for_artifact",
                 AsyncMock(return_value=artifact),
             ),
-            patch("etos_api.routers.v1beta1.testrun.TestRun.create", AsyncMock()) as create_mock,
+            patch(
+                "etos_api.routers.v1beta1.testrun.TestRun.create",
+                AsyncMock(
+                    return_value=StartTestrunResponse(
+                        tercc=uuid4(),
+                        artifact_id=artifact.artifact_id,
+                        artifact_identity=artifact.identity,
+                        event_repository="http://localhost",
+                    )
+                ),
+            ) as create_mock,
         ):
             response = self.client.post(
                 "/api/v1beta1/testrun",
@@ -129,6 +143,9 @@ class TestV1Beta1Router(TestCase):
         self.assertEqual(response.status_code, 500, response.text)
         self.assertEqual(response.json()["detail"], "Failed to create testrun")
         client.return_value.create.assert_called_once()
+        created = client.return_value.create.call_args.args[0]
+        self.assertIsNone(created.metadata.name)
+        self.assertEqual(created.metadata.generateName, "testsuite-")
 
     def test_start_testrun_suite_with_dataset(self):
         """Test that a request dataset is merged into a suite dataset.
@@ -159,3 +176,80 @@ class TestV1Beta1Router(TestCase):
         self.assertDictEqual(suites[0].dataset, {"key": "value"})
         self.assertDictEqual(suites[1].dataset, {"key": "value"})
         self.assertIsNot(suites[0].dataset, suites[1].dataset)
+
+    def test_keyed_start_replays_the_stored_run(self) -> None:
+        """Recover the same run after response loss or a concurrent create conflict."""
+        body = {"artifact_identity": "pkg:x/y", "test_suite_url": "http://localhost/suite.yaml"}
+        path = "/api/v1beta1/testrun"
+        headers = {"Idempotency-Key": str(uuid4())}
+        artifact = Artifact(artifact_id=str(uuid4()), identity="pkg:x/y")
+        with (
+            patch(
+                "etos_api.routers.v1beta1.testrun.TestRun.download_suite",
+                AsyncMock(side_effect=lambda _: _test_suite([None])),
+            ) as download,
+            patch("etos_api.routers.v1beta1.testrun.TestRun.validate_test_runners", AsyncMock()),
+            patch(
+                "etos_api.routers.v1beta1.testrun.TestRun.wait_for_artifact",
+                AsyncMock(return_value=artifact),
+            ),
+            patch("etos_api.routers.v1beta1.testrun.Kubernetes") as kubernetes,
+            patch("etos_api.routers.v1beta1.testrun.TestRunClient") as client_class,
+        ):
+            kubernetes.return_value.namespace = "etos-test"
+            client = client_class.return_value
+            missing = NotFoundError(ApiException(status=404))
+            client.get.side_effect = missing
+            first = self.client.post(path, headers=headers, json=body)
+            self.assertEqual(first.status_code, 200, first.text)
+            self.assertNotEqual(first.json()["tercc"], headers["Idempotency-Key"])
+            created = client.create.call_args.args[0]
+            self.assertIsNone(created.metadata.generateName)
+            self.assertRegex(created.metadata.name, r"^testsuite-[0-9a-f]{32}$")
+            client.get.assert_called_once_with(created.metadata.name)
+            stored = Mock()
+            stored.to_dict.return_value = created.model_dump()
+
+            def get_stored(name: str) -> Mock:
+                if name == created.metadata.name:
+                    return stored
+                raise NotFoundError(ApiException(status=404))
+
+            client.get.side_effect = get_stored
+            self.assertEqual(
+                self.client.post(path, headers=headers, json=body).json(), first.json()
+            )
+            client.get.assert_called_with(created.metadata.name)
+            self.assertEqual(
+                self.client.post(
+                    path, headers=headers, json={**body, "dataset": {"x": 1}}
+                ).status_code,
+                409,
+            )
+            self.assertEqual(download.await_count, 3)
+            client.create.assert_called_once()
+
+            client.get.side_effect = [missing, stored]
+            client.create.side_effect = ConflictError(ApiException(status=409))
+            self.assertEqual(
+                self.client.post(path, headers=headers, json=body).json(), first.json()
+            )
+
+            client.get.side_effect = missing
+            client.create.side_effect = None
+            other = self.client.post(path, headers={"Idempotency-Key": str(uuid4())}, json=body)
+            self.assertEqual(other.status_code, 200, other.text)
+            self.assertNotEqual(other.json()["tercc"], first.json()["tercc"])
+            self.assertNotEqual(
+                client.create.call_args.args[0].metadata.name, created.metadata.name
+            )
+
+    def test_keyed_name_handles_long_and_non_dns_suite_names(self) -> None:
+        """Keep keyed names valid and deterministic for unusual suite names."""
+        request = StartTestrunRequest(
+            artifact_identity="pkg:x/y", test_suite_url="http://localhost/suite.yaml"
+        )
+        start = IdempotentStart.from_request(uuid4(), request)
+        name = start.name_for_suite("A" * 29 + " /" + "B" * 40)
+        self.assertRegex(name, r"^a{29}-[0-9a-f]{32}$")
+        self.assertEqual(start.name_for_suite("!!!"), "testrun-" + name.rsplit("-", 1)[1])
