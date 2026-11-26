@@ -2,7 +2,7 @@ FROM golang:1.26-alpine AS build
 WORKDIR /tmp/iut
 
 # Cache dependencies early
-RUN apk add --no-cache make=4.4.1-r4 git=2.54.0-r0
+RUN apk add --no-cache make=4.4.1-r4
 COPY go.mod go.mod
 COPY go.sum go.sum
 RUN go mod download
@@ -16,7 +16,9 @@ COPY internal/ internal/
 COPY pkg/ pkg/
 COPY .git/ .git/
 
-RUN make iut
+ARG BUILD_REVISION
+RUN test -n "$BUILD_REVISION" || (echo "BUILD_REVISION must be supplied" >&2; exit 1)
+RUN make GOBUILD="go build -buildvcs=false" BUILD_LDFLAGS="-X main.buildRevision=$BUILD_REVISION" iut
 
 FROM alpine:3.17.3
 ARG TZ

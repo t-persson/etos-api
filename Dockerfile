@@ -25,8 +25,9 @@ RUN apt-get update && \
     python -c "from yaml import CSafeLoader" && \
     rm -rf /var/lib/apt/lists/*
 
-RUN groupadd -r etos && useradd -r -m -s /bin/false -g etos etos
-USER etos
+RUN groupadd --gid 3705 etos && \
+    useradd --uid 3705 --create-home --shell /bin/false --gid 3705 etos
+USER 3705:3705
 EXPOSE 8080
 
 LABEL org.opencontainers.image.source=https://github.com/eiffel-community/etos-api
