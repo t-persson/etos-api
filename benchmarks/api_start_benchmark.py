@@ -146,9 +146,9 @@ def _environment(url: SplitResult) -> dict:
     factory = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
     connection = factory(url.hostname, url.port, timeout=60)
 
-    connection.request("GET", str(url.geturl()))
     timeout = time.time() + 10
     while time.time() < timeout:
+        connection.request("GET", str(url.geturl()))
         response = connection.getresponse()
         if response.status == 200:
             environment = json.loads(response.read(655536))
