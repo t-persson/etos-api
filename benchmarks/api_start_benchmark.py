@@ -149,7 +149,6 @@ def _environment(url: SplitResult) -> dict:
     connection.request("GET", str(url.geturl()))
     response = connection.getresponse()
     environment = json.loads(response.read(655536))
-    environment.pop("testExecutions")
     return environment
 
 
