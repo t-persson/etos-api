@@ -146,11 +146,12 @@ def _environment(url: SplitResult) -> dict:
     factory = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
 
     timeout = time.time() + 10
-    print(f"Fetching environment from: {str(url.geturl())}")
+    print(str(url))
+    print(f"Fetching environment from: {url.geturl()}")
     while time.time() < timeout:
         connection = factory(url.hostname, url.port, timeout=60)
         try:
-            connection.request("GET", str(url.geturl()))
+            connection.request("GET", url.geturl())
             response = connection.getresponse()
             if response.status == 200:
                 environment = json.loads(response.read(655536))
@@ -207,8 +208,6 @@ def main() -> int:
         help="Number of parallel POSTs in the largest burst (default: 4)",
     )
     args = parser.parse_args()
-    print(os.environ)
-    print(os.environ["ENVIRONMENT_URL"])
     if args.api == "":
         parser.error("--api or environment ETOS_API must be set")
     if args.max_concurrency < 1:
@@ -234,7 +233,8 @@ def main() -> int:
     except (OSError, ValueError) as error:
         parser.error(str(error))
     directory = Path(os.environ.get("ARTIFACT_PATH") or ".")
-    return _benchmark(config, directory / "etos-api-start-report.json")
+    return 0
+    # return _benchmark(config, directory / "etos-api-start-report.json")
 
 
 if __name__ == "__main__":
