@@ -1,0 +1,19 @@
+name: etos-api-start-benchmark
+schemaVersion: v1beta1
+suites:
+  - testExecutions:
+      - id: 5a56fcf9-8a8b-4797-a154-4f3d98250fd9
+        testCase:
+          id: etos-api/start-benchmark
+          version: "1"
+        execution:
+          checkout:
+            - git clone https://github.com/t-persson/etos-api
+          command: >-
+            python3 etos-api/benchmarks/api_start_benchmark.py
+            --child-suite-url 'https://example.invalid/suites/print-only.yaml'
+            --artifact-id '00000000-0000-0000-0000-000000000000'
+            --cluster cluster-sample
+            --max-concurrency 4
+        environment:
+          testRunner: ghcr.io/eiffel-community/etos-base-test-runner:ubuntu-noble
