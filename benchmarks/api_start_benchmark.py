@@ -146,6 +146,7 @@ def _environment(url: SplitResult) -> dict:
     factory = http.client.HTTPSConnection if url.scheme == "https" else http.client.HTTPConnection
 
     timeout = time.time() + 10
+    print(f"Fetching environment from: {str(url.geturl())}")
     while time.time() < timeout:
         connection = factory(url.hostname, url.port, timeout=60)
         try:
