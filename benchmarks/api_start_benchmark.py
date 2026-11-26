@@ -147,11 +147,15 @@ def _environment(url: SplitResult) -> dict:
     connection = factory(url.hostname, url.port, timeout=60)
 
     connection.request("GET", str(url.geturl()))
-    response = connection.getresponse()
-    environment = json.loads(response.read(655536))
-    print(environment.keys())
-    print(environment)
-    return environment
+    timeout = time.time() + 10
+    while time.time() < timeout:
+        response = connection.getresponse()
+        if response.status == 200:
+            environment = json.loads(response.read(655536))
+            return environment
+        print(f"Status code: {response.status}")
+        time.sleep(1)
+    raise TimeoutError(f"timed out waiting for {url.geturl()}")
 
 
 def _artifact_id_from_environment() -> str:
